@@ -4,12 +4,13 @@ import pandas as pd
 import json
 import os
 
-st.set_page_config(page_title="安全抗封鎖戰情室 v9.0", layout="wide")
+st.set_page_config(page_title="終極量化智慧戰情室 v10.0", layout="wide")
 
-# 🔑 在這裡設定你的專屬密碼
-MY_PRIVATE_PASSWORD = "36333948" 
+# 🔑 在這裡設定你的專屬密碼 (可自由修改)
+MY_PRIVATE_PASSWORD = "1234" 
 
-WATCHLIST_FILE = "my_watchlist_v9.json"
+# 使用新版專屬資料庫檔案，避免版本衝突
+WATCHLIST_FILE = "my_watchlist_v10.json"
 
 # 驗證密碼狀態
 if "authenticated" not in st.session_state:
@@ -35,12 +36,11 @@ if not st.session_state.authenticated:
 # 🔓 核心資料安全抓取區 (快取防禦機制)
 # ===================================================
 
-# 🛠️ 核心防禦：設定 5 分鐘 (300秒) 快取，5分鐘內重複刷網頁絕不驚動 Yahoo
+# 🛡️ 擴展到 90 天天數，以便完美計算 60MA (季線) 趨勢
 @st.cache_data(ttl=300)
 def fetch_clean_stock_data(ticker_symbol):
     stock = yf.Ticker(ticker_symbol)
-    # 只抓取歷史價格數據 (最輕量、絕對不會被 Yahoo 擋)
-    hist = stock.history(period="60d")
+    hist = stock.history(period="90d") 
     if hist.empty:
         raise ValueError("找不到該股票的歷史數據，請檢查代碼是否正確。")
     return hist
@@ -62,8 +62,8 @@ if "live_prices" not in st.session_state:
     st.session_state.live_prices = {}
 
 # --- 網頁介面設計 ---
-st.title("⚡ 盤中即時自選股與精準買入價導航面板")
-st.caption("🔒 密碼安全防護中 │ 🛡️ 已啟用抗封鎖快取機制 (數據每 5 分鐘自動刷新)")
+st.title("🚀 終極量化智慧自選股戰情室 v10.0")
+st.caption("🔒 安全防護中 │ 🛡️ 抗封鎖快取 5分鐘 │ 📈 整合移動停損、季線趨勢與量能爆發辨識")
 
 # 側邊欄控制台
 with st.sidebar:
@@ -85,7 +85,7 @@ with st.sidebar:
                 st.rerun()
         if st.button("🔄 清除所有手動現價"):
             st.session_state.live_prices = {}
-            st.clear_cache() # 手動還原時順便清空快取刷新
+            st.cache_data.clear() 
             st.rerun()
             
     st.write("---")
@@ -102,7 +102,7 @@ with st.sidebar:
         if new_stock:
             st.session_state.watchlist[new_stock] = {"type": stock_type, "cost": cost, "qty": qty}
             save_watchlist(st.session_state.watchlist)
-            st.clear_cache() # 新增股票時清空快取，確保新股票能抓到資料
+            st.cache_data.clear() 
             st.success(f"成功加入 {new_stock}！")
             st.rerun()
             
@@ -121,18 +121,16 @@ with st.sidebar:
 if not st.session_state.watchlist:
     st.warning("目前監控清單空空如也，請在左側選單新增股票！")
 else:
-    st.subheader("📋 價格對照與買入時機動態評估表")
+    st.subheader("📋 策略指標與動態停損導航面板")
     
     rows = []
     for ticker_symbol, item in st.session_state.watchlist.items():
         try:
-            # 使用我們設計的超輕量快取函數
+            # 抓取90天輕量數據
             hist = fetch_clean_stock_data(ticker_symbol)
-            
-            # 從歷史數據的最後一筆直接抓取最新網路收盤價
             net_price = hist['Close'].iloc[-1]
             
-            # 決定最終顯示價格
+            # 確定當前市價
             if ticker_symbol in st.session_state.live_prices:
                 price = st.session_state.live_prices[ticker_symbol]
                 price_display = f"⚡ {price:.2f} (即時)"
@@ -140,62 +138,84 @@ else:
                 price = net_price
                 price_display = f"🌐 {price:.2f} (網路)"
             
-            # 計算20MA(月線)
+            # --- 技術指標量化計算 ---
             hist['MA20'] = hist['Close'].rolling(window=20).mean()
-            current_ma20 = hist['MA20'].iloc[-1]
+            hist['MA60'] = hist['Close'].rolling(window=60).mean()
+            hist['VolMA20'] = hist['Volume'].rolling(window=20).mean()
             
-            # 計算建議買入價格區間
+            current_ma20 = hist['MA20'].iloc[-1]
+            current_ma60 = hist['MA60'].iloc[-1]
+            prev_ma60 = hist['MA60'].iloc[-2] if len(hist) > 1 else current_ma60
+            
+            current_vol = hist['Volume'].iloc[-1]
+            avg_vol = hist['VolMA20'].iloc[-1]
+            
+            # 1. 月線買入區間評估
             if current_ma20 > 0:
-                buy_price_lower = current_ma20
-                buy_price_upper = current_ma20 * 1.05
-                buy_range_str = f"{buy_price_lower:.2f} ~ {buy_price_upper:.2f} 元"
+                buy_lower = current_ma20
+                buy_upper = current_ma20 * 1.05
+                buy_range_str = f"{buy_lower:.2f} ~ {buy_upper:.2f} 元"
                 
-                if price < buy_price_lower:
-                    price_eval = f"🔴 跌破月線 (空頭勿接刀)"
-                elif buy_price_lower <= price <= buy_price_upper:
-                    price_eval = f"🟢 正值買點 (黃金支撐區)"
+                if price < buy_lower:
+                    price_eval = "🔴 跌破月線 (觀望接刀)"
+                elif buy_lower <= price <= buy_upper:
+                    price_eval = "🟢 黃金支撐 (正值買點)"
                 else:
-                    price_eval = f"🟡 股價偏高 (建議等回檔)"
+                    price_eval = "🟡 股價偏高 (建議等回檔)"
             else:
                 buy_range_str = "計算中..."
                 price_eval = "資料不足"
-
-            # 損益動態計算
+            
+            # 2. 季線趨勢 與 20日均量爆發辨識
+            ma60_trend = "季線翻揚📈" if current_ma60 > prev_ma60 else "季線下彎📉"
+            vol_ratio = current_vol / avg_vol if avg_vol > 0 else 1
+            if vol_ratio >= 1.5:
+                vol_status = "🔥 量能爆發"
+            elif vol_ratio <= 0.5:
+                vol_status = "💤 窒息量"
+            else:
+                vol_status = "均量"
+            
+            tech_tactics = f"{ma60_trend} ｜ {vol_status}"
+            
+            # 3. 核心：10% 移動停損防線計算 (追隨歷史與現價最高峰)
+            historical_max = hist['Close'].max()
+            peak_price = max(item["cost"], historical_max, price) # 成本、網路最高、手動輸入最高，三者取最大
+            trailing_stop_line = peak_price * 0.90 # 從最高點撤退 10% 
+            
+            # 4. 持股動態動態監控
             if item["type"] == "已持股":
                 my_cost = item["cost"]
                 my_qty = item["qty"]
                 pnl = (price - my_cost) * my_qty
                 roi = (pnl / (my_cost * my_qty) * 100) if my_cost > 0 else 0
                 pnl_str = f"{pnl:,.0f} 元 ({roi:+.1f}%)"
-                stop_loss = f"{my_cost * 0.9:.2f} 元"
-                take_profit = f"{my_cost * 1.2:.2f} 元"
+                
+                if price < trailing_stop_line:
+                    hold_action = "🚨 觸發移動停損！分批出場"
+                else:
+                    hold_action = "🍏 安全防禦線內，續抱"
             else:
                 pnl_str = "—"
-                stop_loss = f"{price * 0.9:.2f} 元"
-                take_profit = f"{price * 1.2:.2f} 元"
+                hold_action = "觀察中 (無持股)"
                 
             rows.append({
                 "代碼": ticker_symbol,
                 "狀態": "已持股" if item["type"] == "已持股" else "觀察中",
                 "當前價格 (元)": price_display,
-                "🛒 建議買入價區間": buy_range_str,
+                "🛒 建議買入價區間 (20MA)": buy_range_str,
                 "🎯 當前價位評估": price_eval,
-                "目前總損益": pnl_str,
-                "當前20MA(月線)": f"{current_ma20:.2f} 元",
-                "🔴 策略停損點": stop_loss,
-                "🟢 策略停利點": take_profit
+                "📊 季線趨勢 ｜ 盤中量能": tech_tactics,
+                "🛡️ 10%動態移動停損點": f"{trailing_stop_line:.2f} 元",
+                "🚨 持股警報動態": hold_action,
+                "目前總損益": pnl_str
             })
         except Exception as e:
             rows.append({
-                "代碼": ticker_symbol,
-                "狀態": "錯誤",
-                "當前價格 (元)": "讀取失敗",
-                "🛒 建議買入價區間": "請稍後再試",
-                "🎯 當前價位評估": f"⚠️ Yahoo暫時封鎖此伺服器: {str(e)[:30]}",
-                "目前總損益": "—",
-                "當前20MA(月線)": "—",
-                "🔴 策略停損點": "—",
-                "🟢 策略停利點": "—"
+                "代碼": ticker_symbol, "狀態": "錯誤", "當前價格 (元)": "失敗",
+                "🛒 建議買入價區間 (20MA)": "—", "🎯 當前價位評估": f"⚠️ 錯誤: {str(e)[:20]}",
+                "📊 季線趨勢 ｜ 盤中量能": "—", "🛡️ 10%動態移動停損點": "—",
+                "🚨 持股警報動態": "—", "目前總損益": "—"
             })
             
     if rows:
