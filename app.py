@@ -4,28 +4,24 @@ import pandas as pd
 import json
 import os
 
-st.set_page_config(page_title="安全密碼控管戰情室 v8.0", layout="wide")
+st.set_page_config(page_title="安全抗封鎖戰情室 v9.0", layout="wide")
 
-# ===================================================
-# 🔑 在這裡設定你的專屬密碼 (把 1234 改成你想設定的密碼)
-# ===================================================
-MY_PRIVATE_PASSWORD = "1234" 
+# 🔑 在這裡設定你的專屬密碼
+MY_PRIVATE_PASSWORD = "36333948" 
 
-WATCHLIST_FILE = "my_watchlist_v8.json"
+WATCHLIST_FILE = "my_watchlist_v9.json"
 
 # 驗證密碼狀態
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
-# 如果還沒登入，顯示密碼鎖畫面
+# 密碼鎖畫面
 if not st.session_state.authenticated:
     st.markdown("<h2 style='text-align: center;'>🔒 歡迎來到個人私密看盤戰情室</h2>", unsafe_allow_html=True)
     st.write("---")
-    
-    # 居中對齊的密碼輸入框
     col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
-        input_password = st.text_input("请输入管理員密碼", type="password", placeholder="請輸入密碼...")
+        input_password = st.text_input("請輸入管理員密碼", type="password", placeholder="請輸入密碼...")
         if st.button("確認解鎖 🔓", use_container_width=True):
             if input_password == MY_PRIVATE_PASSWORD:
                 st.session_state.authenticated = True
@@ -33,20 +29,28 @@ if not st.session_state.authenticated:
                 st.rerun()
             else:
                 st.error("❌ 密碼錯誤，拒絕存取！")
-    st.stop() # 阻斷後續程式碼執行，沒密碼的人後面什麼都看不到
+    st.stop()
 
 # ===================================================
-# 🔓 以下為解鎖後才會執行的核心程式碼
+# 🔓 核心資料安全抓取區 (快取防禦機制)
 # ===================================================
+
+# 🛠️ 核心防禦：設定 5 分鐘 (300秒) 快取，5分鐘內重複刷網頁絕不驚動 Yahoo
+@st.cache_data(ttl=300)
+def fetch_clean_stock_data(ticker_symbol):
+    stock = yf.Ticker(ticker_symbol)
+    # 只抓取歷史價格數據 (最輕量、絕對不會被 Yahoo 擋)
+    hist = stock.history(period="60d")
+    if hist.empty:
+        raise ValueError("找不到該股票的歷史數據，請檢查代碼是否正確。")
+    return hist
 
 # 讀取自選股庫存資料
 def load_watchlist():
     if os.path.exists(WATCHLIST_FILE):
         with open(WATCHLIST_FILE, "r") as f:
             return json.load(f)
-    return {
-        "2330.TW": {"type": "觀察中", "cost": 0.0, "qty": 0}
-    }
+    return {"2330.TW": {"type": "觀察中", "cost": 0.0, "qty": 0}}
 
 def save_watchlist(watchlist):
     with open(WATCHLIST_FILE, "w") as f:
@@ -59,17 +63,14 @@ if "live_prices" not in st.session_state:
 
 # --- 網頁介面設計 ---
 st.title("⚡ 盤中即時自選股與精準買入價導航面板")
-st.caption("🔒 已啟用密碼安全防護 │ ✅ 自動計算月線黃金買入價 0%~5% 區間")
+st.caption("🔒 密碼安全防護中 │ 🛡️ 已啟用抗封鎖快取機制 (數據每 5 分鐘自動刷新)")
 
-# 側邊欄：管理清單與盤中即時價
+# 側邊欄控制台
 with st.sidebar:
     st.header("🛠️ 戰情室控制台")
-    
-    # 登出按鈕
     if st.button("🔒 登出系統"):
         st.session_state.authenticated = False
         st.rerun()
-        
     st.write("---")
     
     # 功能一：盤中即時價格輸入
@@ -84,26 +85,25 @@ with st.sidebar:
                 st.rerun()
         if st.button("🔄 清除所有手動現價"):
             st.session_state.live_prices = {}
+            st.clear_cache() # 手動還原時順便清空快取刷新
             st.rerun()
             
     st.write("---")
-    
     # 功能二：新增股票
-    st.subheader("➕ 新增股票 / 修改庫存")
+    st.subheader("➕ 新增股票")
     new_stock = st.text_input("輸入股票代碼", placeholder="例如: 2454.TW").upper().strip()
     stock_type = st.selectbox("狀態類別", ["觀察中 (尚未買進)", "已持股"])
-    
     cost = 0.0
     qty = 0
     if stock_type == "已持股":
         cost = st.number_input("您的買入成本價 (元)", min_value=0.0, step=0.1)
         qty = st.number_input("持有股數", min_value=0, step=100)
-        
     if st.button("確認儲存"):
         if new_stock:
             st.session_state.watchlist[new_stock] = {"type": stock_type, "cost": cost, "qty": qty}
             save_watchlist(st.session_state.watchlist)
-            st.success(f"成功加入/更新 {new_stock}！")
+            st.clear_cache() # 新增股票時清空快取，確保新股票能抓到資料
+            st.success(f"成功加入 {new_stock}！")
             st.rerun()
             
     st.write("---")
@@ -126,12 +126,13 @@ else:
     rows = []
     for ticker_symbol, item in st.session_state.watchlist.items():
         try:
-            stock = yf.Ticker(ticker_symbol)
-            info = stock.info
-            name = info.get('shortName', ticker_symbol)
+            # 使用我們設計的超輕量快取函數
+            hist = fetch_clean_stock_data(ticker_symbol)
             
-            # 決定價格
-            net_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
+            # 從歷史數據的最後一筆直接抓取最新網路收盤價
+            net_price = hist['Close'].iloc[-1]
+            
+            # 決定最終顯示價格
             if ticker_symbol in st.session_state.live_prices:
                 price = st.session_state.live_prices[ticker_symbol]
                 price_display = f"⚡ {price:.2f} (即時)"
@@ -139,10 +140,9 @@ else:
                 price = net_price
                 price_display = f"🌐 {price:.2f} (網路)"
             
-            # 技術面數據計算 (月線)
-            hist = stock.history(period="60d")
+            # 計算20MA(月線)
             hist['MA20'] = hist['Close'].rolling(window=20).mean()
-            current_ma20 = hist['MA20'].iloc[-1] if not hist.empty else 0
+            current_ma20 = hist['MA20'].iloc[-1]
             
             # 計算建議買入價格區間
             if current_ma20 > 0:
@@ -176,7 +176,6 @@ else:
                 
             rows.append({
                 "代碼": ticker_symbol,
-                "名稱": name,
                 "狀態": "已持股" if item["type"] == "已持股" else "觀察中",
                 "當前價格 (元)": price_display,
                 "🛒 建議買入價區間": buy_range_str,
@@ -187,7 +186,18 @@ else:
                 "🟢 策略停利點": take_profit
             })
         except Exception as e:
-            st.error(f"❌ 無法抓取 {ticker_symbol} 資料。原因：{str(e)}")            
+            rows.append({
+                "代碼": ticker_symbol,
+                "狀態": "錯誤",
+                "當前價格 (元)": "讀取失敗",
+                "🛒 建議買入價區間": "請稍後再試",
+                "🎯 當前價位評估": f"⚠️ Yahoo暫時封鎖此伺服器: {str(e)[:30]}",
+                "目前總損益": "—",
+                "當前20MA(月線)": "—",
+                "🔴 策略停損點": "—",
+                "🟢 策略停利點": "—"
+            })
+            
     if rows:
         df = pd.DataFrame(rows)
         st.dataframe(df, use_container_width=True)
