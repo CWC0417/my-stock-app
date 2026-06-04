@@ -4,9 +4,40 @@ import pandas as pd
 import json
 import os
 
-st.set_page_config(page_title="盤中即時價與買入價位導航 v7.0", layout="wide")
+st.set_page_config(page_title="安全密碼控管戰情室 v8.0", layout="wide")
 
-WATCHLIST_FILE = "my_watchlist_v7.json"
+# ===================================================
+# 🔑 在這裡設定你的專屬密碼 (把 1234 改成你想設定的密碼)
+# ===================================================
+MY_PRIVATE_PASSWORD = "1234" 
+
+WATCHLIST_FILE = "my_watchlist_v8.json"
+
+# 驗證密碼狀態
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+# 如果還沒登入，顯示密碼鎖畫面
+if not st.session_state.authenticated:
+    st.markdown("<h2 style='text-align: center;'>🔒 歡迎來到個人私密看盤戰情室</h2>", unsafe_allow_html=True)
+    st.write("---")
+    
+    # 居中對齊的密碼輸入框
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col2:
+        input_password = st.text_input("请输入管理員密碼", type="password", placeholder="請輸入密碼...")
+        if st.button("確認解鎖 🔓", use_container_width=True):
+            if input_password == MY_PRIVATE_PASSWORD:
+                st.session_state.authenticated = True
+                st.success("密碼正確，正在開門...")
+                st.rerun()
+            else:
+                st.error("❌ 密碼錯誤，拒絕存取！")
+    st.stop() # 阻斷後續程式碼執行，沒密碼的人後面什麼都看不到
+
+# ===================================================
+# 🔓 以下為解鎖後才會執行的核心程式碼
+# ===================================================
 
 # 讀取自選股庫存資料
 def load_watchlist():
@@ -14,15 +45,13 @@ def load_watchlist():
         with open(WATCHLIST_FILE, "r") as f:
             return json.load(f)
     return {
-        "2330.TW": {"type": "觀察中", "cost": 0.0, "qty": 0},
-        "2317.TW": {"type": "觀察中", "cost": 0.0, "qty": 0}
+        "2330.TW": {"type": "觀察中", "cost": 0.0, "qty": 0}
     }
 
 def save_watchlist(watchlist):
     with open(WATCHLIST_FILE, "w") as f:
         json.dump(watchlist, f)
 
-# 初始化狀態
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = load_watchlist()
 if "live_prices" not in st.session_state:
@@ -30,14 +59,21 @@ if "live_prices" not in st.session_state:
 
 # --- 網頁介面設計 ---
 st.title("⚡ 盤中即時自選股與精準買入價導航面板")
-st.caption("✅ 自動計算月線黃金買入價 0%~5% 區間 │ ✅ 支援盤中即時價覆蓋 │ ✅ 秒級同步判斷目前價位")
+st.caption("🔒 已啟用密碼安全防護 │ ✅ 自動計算月線黃金買入價 0%~5% 區間")
 
 # 側邊欄：管理清單與盤中即時價
 with st.sidebar:
     st.header("🛠️ 戰情室控制台")
     
+    # 登出按鈕
+    if st.button("🔒 登出系統"):
+        st.session_state.authenticated = False
+        st.rerun()
+        
+    st.write("---")
+    
     # 功能一：盤中即時價格輸入
-    st.subheader("🔥 盤中即時價覆蓋 (開盤用)")
+    st.subheader("🔥 盤中即時價覆蓋")
     if st.session_state.watchlist:
         target_stock = st.selectbox("選擇要更新現價的股票", list(st.session_state.watchlist.keys()))
         input_p = st.number_input(f"輸入 {target_stock} 目前券商即時價", min_value=0.0, step=0.1, key="live_p_input")
@@ -46,7 +82,7 @@ with st.sidebar:
                 st.session_state.live_prices[target_stock] = input_p
                 st.success(f"已成功覆蓋 {target_stock} 價格為 {input_p} 元！")
                 st.rerun()
-        if st.button("🔄 清除所有手動現價 (還原網路價)"):
+        if st.button("🔄 清除所有手動現價"):
             st.session_state.live_prices = {}
             st.rerun()
             
@@ -54,7 +90,7 @@ with st.sidebar:
     
     # 功能二：新增股票
     st.subheader("➕ 新增股票 / 修改庫存")
-    new_stock = st.text_input("輸入股票代碼", placeholder="例如: 2454.TW 或 TSLA").upper().strip()
+    new_stock = st.text_input("輸入股票代碼", placeholder="例如: 2454.TW").upper().strip()
     stock_type = st.selectbox("狀態類別", ["觀察中 (尚未買進)", "已持股"])
     
     cost = 0.0
@@ -85,7 +121,7 @@ with st.sidebar:
 if not st.session_state.watchlist:
     st.warning("目前監控清單空空如也，請在左側選單新增股票！")
 else:
-    st.subheader("📋 價格對照與買入時機動態評功表")
+    st.subheader("📋 價格對照與買入時機動態評估表")
     
     rows = []
     for ticker_symbol, item in st.session_state.watchlist.items():
@@ -108,13 +144,12 @@ else:
             hist['MA20'] = hist['Close'].rolling(window=20).mean()
             current_ma20 = hist['MA20'].iloc[-1] if not hist.empty else 0
             
-            # --- 🎯 核心：計算建議買入價格區間 (月線 ~ 月線 + 5%) ---
+            # 計算建議買入價格區間
             if current_ma20 > 0:
                 buy_price_lower = current_ma20
                 buy_price_upper = current_ma20 * 1.05
                 buy_range_str = f"{buy_price_lower:.2f} ~ {buy_price_upper:.2f} 元"
                 
-                # 比對現價與建議買入價
                 if price < buy_price_lower:
                     price_eval = f"🔴 跌破月線 (空頭勿接刀)"
                 elif buy_price_lower <= price <= buy_price_upper:
@@ -125,7 +160,7 @@ else:
                 buy_range_str = "計算中..."
                 price_eval = "資料不足"
 
-            # 損益與出場點動態計算
+            # 損益動態計算
             if item["type"] == "已持股":
                 my_cost = item["cost"]
                 my_qty = item["qty"]
@@ -152,15 +187,7 @@ else:
                 "🟢 策略停利點": take_profit
             })
         except Exception as e:
-            st.error(f"無法抓取 {ticker_symbol} 資料。")
-            
+            st.error(f"❌ 無法抓取 {ticker_symbol} 資料。原因：{str(e)}")            
     if rows:
         df = pd.DataFrame(rows)
         st.dataframe(df, use_container_width=True)
-
-st.markdown("""
----
-### 💡 戰情室看盤教學：
-1. **🛒 建議買入價區間**：這是系統幫你動態算出的「安全無痛進場區」。只要當前價格掉進這個區間內，欄位就會亮起 **「🟢 正值買點」**。
-2. **手動覆蓋的好處**：開盤時，網路抓到的價格可能有延遲。此時只要在左側輸入你手機看盤軟體看到的當下現價，系統就會**立刻拿最新現價去跟建議買入價對照**，讓你秒懂現在到底能不能敲單！
-""")
