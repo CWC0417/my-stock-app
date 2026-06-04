@@ -7,7 +7,7 @@ import os
 st.set_page_config(page_title="終極量化智慧戰情室 v10.0", layout="wide")
 
 # 🔑 在這裡設定你的專屬密碼 (可自由修改)
-MY_PRIVATE_PASSWORD = "1234" 
+MY_PRIVATE_PASSWORD = "36333948" 
 
 # 使用新版專屬資料庫檔案，避免版本衝突
 WATCHLIST_FILE = "my_watchlist_v10.json"
