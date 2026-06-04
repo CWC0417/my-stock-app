@@ -7,7 +7,7 @@ import os
 st.set_page_config(page_title="量化智慧戰情室 v10.5 手機優化版", layout="wide")
 
 # 🔑 密碼與檔案設定
-MY_PRIVATE_PASSWORD = "1234" 
+MY_PRIVATE_PASSWORD = "36333948" 
 WATCHLIST_FILE = "my_watchlist_v10.json"
 
 if "authenticated" not in st.session_state:
