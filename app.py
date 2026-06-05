@@ -17,7 +17,7 @@ NAMES_FILE = "my_stock_names.json"
 BACKUP_DATA_FILE = "my_stock_backup_data.json" # 儲存手動備援數據
 
 # 💡 提示：如果不想被雲端共用 IP 限制，可以去 https://finmindtrade.com/ 免費註冊會員並把 Token 貼在下方
-FINMIND_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoiMzQzNTY4MTIiLCJlbWFpbCI6IngxMjN5ejg3QGdtYWlsLmNvbSIsInRva2VuX3ZlcnNpb24iOjB9.X3YH2qYzM84f3iJeD0vendPFoUP7nvrONOyXvkfDdWQ" 
+FINMIND_TOKEN = "" 
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
