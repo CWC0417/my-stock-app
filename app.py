@@ -8,7 +8,7 @@ import time
 st.set_page_config(page_title="量化智慧戰情室 v12.2", layout="wide")
 
 # 🔑 密碼與檔案設定
-MY_PRIVATE_PASSWORD = "1234" 
+MY_PRIVATE_PASSWORD = "36333948" 
 WATCHLIST_FILE = "my_watchlist_v10.json"
 NAMES_FILE = "my_stock_names.json"
 
