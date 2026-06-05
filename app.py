@@ -5,12 +5,13 @@ import json
 import os
 import time
 
-st.set_page_config(page_title="量化智慧戰情室 v13.0 策略雷達版", layout="wide")
+st.set_page_config(page_title="量化智慧戰情室 v13.2 人機協同版", layout="wide")
 
 # 🔑 密碼與檔案設定
-MY_PRIVATE_PASSWORD = "36333948" 
+MY_PRIVATE_PASSWORD = "1234" 
 WATCHLIST_FILE = "my_watchlist_v10.json"
 NAMES_FILE = "my_stock_names.json"
+EXTRA_FILE = "my_stock_extra.json" # 👈 新增：儲存手動輸入的籌碼與基本面
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -44,14 +45,12 @@ if "watchlist" not in st.session_state:
 if "live_prices" not in st.session_state:
     st.session_state.live_prices = {}
 
-# ===================================================
-# 🔓 資料抓取核心 (拉長到 6個月以計算 60MA 扣抵值)
-# ===================================================
+# 資料抓取核心
 @st.cache_data(ttl=600)
 def fetch_clean_stock_data(ticker_symbol):
     try:
         stock = yf.Ticker(ticker_symbol)
-        hist = stock.history(period="6mo") # 👈 關鍵：必須要有 6個月資料才能算 60MA 扣抵值
+        hist = stock.history(period="6mo") 
         if len(hist) < 65:
             return None, "歷史資料不足(至少需65個交易日)"
         return hist, "OK"
@@ -63,8 +62,8 @@ def get_display_name(ticker):
     return names.get(ticker, ticker)
 
 # --- 頂端標題區 ---
-st.title("⚡ 智慧自選股戰情室 v13.0 策略雷達版")
-st.caption("📈 已匯入：量縮洗盤判定 │ 🎯 季線扣抵值預測 │ 🚨 3天3%雙重停損防線")
+st.title("⚡ 智慧自選股戰情室 v13.2")
+st.caption("🤖 人機協同進化：🧠 支援手動輸入籌碼/基本面 │ 🛒 建議買入價區間 (60MA) │ 🛡️ 雙重停損監控")
 
 main_tab, control_tab = st.tabs(["📈 核心戰情面板", "⚙️ 股票管理控制台"])
 
@@ -79,14 +78,22 @@ with main_tab:
         st.write("---")
         
         rows = []
+        extra_db = load_json(EXTRA_FILE, {}) # 載入自訂籌碼基本面資料
+        
         for ticker_symbol, item in st.session_state.watchlist.items():
             stock_name = get_display_name(ticker_symbol)
             hist, status = fetch_clean_stock_data(ticker_symbol)
             
+            # 讀取該股自訂資料 (若無則顯示未設定)
+            stock_extra = extra_db.get(ticker_symbol, {"chips": "⚪ 未評估", "fundamental": "⚪ 未評估"})
+            
             if hist is None:
                 rows.append({
                     "代碼": ticker_symbol, "名稱": stock_name, "狀態": "錯誤", "當前價格 (元)": "連線失敗",
-                    "🎯 戰術策略評估": f"⚠️ {status[:20]}", "🛡️ 移動停損防線": "—", "🚨 持股警報動態": "請稍後再試", "目前總損益": "—"
+                    "🛒 建議買入價區間 (60MA)": "—", "🎯 戰術策略評估": f"⚠️ {status[:20]}", 
+                    "量能狀態": "—", "K線型態": "—", "季線扣抵預測": "—",
+                    "👤 法人籌碼": stock_extra["chips"], "📈 基本面底氣": stock_extra["fundamental"],
+                    "🛡️ 10%移動停損防線": "—", "🚨 持股警報動態": "請稍後再試", "目前總損益": "—"
                 })
                 continue
 
@@ -105,14 +112,19 @@ with main_tab:
             current_ma60 = hist['MA60'].iloc[-1]
             prev_ma60 = hist['MA60'].iloc[-2]
             
-            # 1. 季線扣抵值判定 (看60個交易日前的價格)
-            deduction_price = hist['Close'].iloc[-60]
-            if price > deduction_price:
-                deduction_status = "🟢 扣低值 (季線續揚力道強)"
+            if pd.notna(current_ma60) and current_ma60 > 0:
+                buy_lower = current_ma60
+                buy_upper = current_ma60 * 1.05
+                buy_range_str = f"{buy_lower:.2f} ~ {buy_upper:.2f} 元"
             else:
-                deduction_status = "🔴 扣高值 (季線恐走平下彎)"
+                buy_range_str = "計算中..."
+
+            # 1. 季線扣抵值判定
+            deduction_price = hist['Close'].iloc[-60]
+            if price > deduction_price: deduction_status = "🟢 扣低值 (季線續揚力道強)"
+            else: deduction_status = "🔴 扣高值 (季線恐走平下彎)"
                 
-            # 2. 量縮洗盤判定 (短均量 < 長均量)
+            # 2. 量縮洗盤判定
             v_ma5 = hist['VolMA5'].iloc[-1]
             v_ma20 = hist['VolMA20'].iloc[-1]
             volume_status = "🟢 成功量縮" if v_ma5 < v_ma20 else "🟡 尚未量縮"
@@ -135,50 +147,43 @@ with main_tab:
             else:
                 k_status = "🔴 黑K下殺中 (觀望)"
             
-            # 綜合策略買點評估 (價格回檔到季線 0%~5% 區間)
-            buy_lower = current_ma60
-            buy_upper = current_ma60 * 1.05
-            
+            # 綜合策略買點評估
             if buy_lower <= price <= buy_upper:
                 if is_stop_drop and v_ma5 < v_ma20:
                     strategy_eval = "🔥 終極買點：量縮止跌守季線！"
                 else:
-                    strategy_eval = f"🟡 進入季線守備區 ({buy_lower:.1f}~{buy_upper:.1f})，等量縮止跌"
+                    strategy_eval = "🟡 進入季線守備區，等待量縮止跌訊號"
             elif price < buy_lower:
                 strategy_eval = "❌ 跌破季線：暫不伸手接刀"
             else:
                 strategy_eval = "⚪ 股價偏高：耐心等待拉回"
 
-            # 4. 警報與雙重停損監控 (檢查過去3天是否都跌破季線3%)
+            # 4. 警報與雙重停損監控
             hist['Below_3Pct'] = hist['Close'] < (hist['MA60'] * 0.97)
-            failed_days = hist['Below_3Pct'].iloc[-3:].sum() # 計算過去三天有幾天符合跌破 3%
+            failed_days = hist['Below_3Pct'].iloc[-3:].sum()
             
             historical_max = hist['Close'].max()
             peak_price = max(item["cost"], historical_max, price)
-            trailing_stop_line = peak_price * 0.90 # 原本的 10% 移動停損
+            trailing_stop_line = peak_price * 0.90 
             
             if item["type"] == "已持股":
                 pnl = (price - item["cost"]) * item["qty"]
                 roi = (pnl / (item["cost"] * item["qty"]) * 100) if item["cost"] > 0 else 0
                 pnl_str = f"{pnl:,.0f} 元 ({roi:+.1f}%)"
                 
-                # 停損優先級判斷
-                if failed_days == 3:
-                    hold_action = "🚨 價格停損：連續3天跌破季線3%！"
-                elif current_ma60 < prev_ma60:
-                    hold_action = "⚠️ 趨勢停損：季線已開始下彎！"
-                elif price < trailing_stop_line:
-                    hold_action = "🚨 移動停損：跌破高點拉回10%防線！"
-                else:
-                    hold_action = "🍏 續抱全區 (季線趨勢向上)"
+                if failed_days == 3: hold_action = "🚨 價格停損：連續3天跌破季線3%！"
+                elif current_ma60 < prev_ma60: hold_action = "⚠️ 趨勢停損：季線已開始下彎！"
+                elif price < trailing_stop_line: hold_action = "🚨 移動停損：跌破高點拉回10%防線！"
+                else: hold_action = "🍏 續抱安全區 (季線趨勢向上)"
             else:
                 pnl_str = "—"
                 hold_action = "觀察中"
                 
             rows.append({
                 "代碼": ticker_symbol, "名稱": stock_name, "狀態": "已持股" if item["type"] == "已持股" else "觀察中",
-                "當前價格 (元)": price_display, "🎯 戰術策略評估": strategy_eval,
+                "當前價格 (元)": price_display, "🛒 建議買入價區間 (60MA)": buy_range_str, "🎯 戰術策略評估": strategy_eval,
                 "量能狀態": volume_status, "K線型態": k_status, "季線扣抵預測": deduction_status,
+                "👤 法人籌碼": stock_extra["chips"], "📈 基本面底氣": stock_extra["fundamental"],
                 "🛡️ 10%移動停損防線": f"{trailing_stop_line:.2f} 元", "🚨 持股警報動態": hold_action, "目前總損益": pnl_str
             })
 
@@ -188,7 +193,12 @@ with main_tab:
         else:
             for r in rows:
                 with st.expander(f"📈 {r['名稱']} ({r['代碼']}) ｜ {r['當前價格 (元)']}"):
-                    st.markdown(f"**🎯 核心戰術評估：** <font color='orange'>**{r['🎯 戰術策略評估']}**</font>", unsafe_allow_html=True)
+                    st.markdown(f"**🛒 建議買入區間 (60MA)：** <font color='#66ff66'>**{r['🛒 建議買入價區間 (60MA)']}**</font>", unsafe_allow_html=True)
+                    st.markdown(f"**🎯 核心戰術評估：** **{r['🎯 戰術策略評估']}**")
+                    st.markdown(f"---")
+                    st.markdown(f"**👤 法人籌碼守護：** {r['👤 法人籌碼']}")
+                    st.markdown(f"**📈 基本面底氣：** {r['📈 基本面底氣']}")
+                    st.markdown(f"---")
                     st.markdown(f"**📊 量能洗盤檢測：** {r['量能狀態']}")
                     st.markdown(f"**🕯️ K線止跌訊號：** {r['K線型態']}")
                     st.markdown(f"**🔮 季線扣抵預測：** {r['季線扣抵預測']}")
@@ -212,7 +222,35 @@ with control_tab:
                 names_db[target_stock_name] = new_name
                 save_json(NAMES_FILE, names_db)
                 st.success("名稱已更新！")
-                time.sleep(1)
+                time.sleep(0.5)
+                st.rerun()
+
+        st.write("---")
+        # 📌 全新功能：手動輸入籌碼面與基本面
+        st.subheader("📊 自訂籌碼與基本面")
+        if st.session_state.watchlist:
+            extra_db = load_json(EXTRA_FILE, {})
+            target_extra = st.selectbox("選擇股票設定基本/籌碼面", list(st.session_state.watchlist.keys()), key="extra_target")
+            
+            # 讀取現有設定做為預設值
+            current_extra = extra_db.get(target_extra, {"chips": "⚪ 籌碼中性", "fundamental": "⚪ 基本面普通"})
+            
+            # 使用下拉選單方便手機操作
+            chip_options = ["🟢 法人逆勢加碼守護", "🔴 法人瘋狂倒貨中", "⚪ 籌碼中性/無大戶"]
+            fundamental_options = ["🟢 營收獲利持續成長 (有底氣)", "🔴 沒賺錢投機飆股 (防斷線)", "⚪ 基本面普通/平穩"]
+            
+            # 抓取預設索引位置，防報錯
+            c_idx = chip_options.index(current_extra["chips"]) if current_extra["chips"] in chip_options else 2
+            f_idx = fundamental_options.index(current_extra["fundamental"]) if current_extra["fundamental"] in fundamental_options else 2
+
+            chosen_chip = st.selectbox("👤 法人籌碼狀態", chip_options, index=c_idx)
+            chosen_fund = st.selectbox("📈 基本面體質", fundamental_options, index=f_idx)
+            
+            if st.button("💾 儲存籌碼與基本面設定", use_container_width=True):
+                extra_db[target_extra] = {"chips": chosen_chip, "fundamental": chosen_fund}
+                save_json(EXTRA_FILE, extra_db)
+                st.success(f"{target_extra} 的自訂資料已儲存！")
+                time.sleep(0.5)
                 st.rerun()
 
         st.write("---")
@@ -224,7 +262,7 @@ with control_tab:
                 if input_p > 0:
                     st.session_state.live_prices[target_stock_price] = input_p
                     st.success("價格已同步！")
-                    time.sleep(1)
+                    time.sleep(0.5)
                     st.rerun()
             if st.button("🔄 清除所有手動現價", use_container_width=True):
                 st.session_state.live_prices = {}
@@ -246,7 +284,7 @@ with control_tab:
                 save_json(WATCHLIST_FILE, st.session_state.watchlist)
                 st.cache_data.clear()
                 st.success(f"已加入 {new_stock}")
-                time.sleep(1)
+                time.sleep(0.5)
                 st.rerun()
 
         st.write("---")
@@ -255,9 +293,10 @@ with control_tab:
             st.write("無股票可刪除")
         for stock_id in list(st.session_state.watchlist.keys()):
             if st.button(f"❌ 刪除 {stock_id}", key=f"del_{stock_id}", use_container_width=True):
-                if stock_id in st.session_state.live_prices:
-                    del st.session_state.live_prices[stock_id]
+                if stock_id in st.session_state.live_prices: del st.session_state.live_prices[stock_id]
+                if stock_id in extra_db: del extra_db[stock_id]
                 del st.session_state.watchlist[stock_id]
                 save_json(WATCHLIST_FILE, st.session_state.watchlist)
+                save_json(EXTRA_FILE, extra_db)
                 st.cache_data.clear()
                 st.rerun()
