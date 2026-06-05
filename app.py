@@ -4,45 +4,37 @@ import pandas as pd
 import json
 import os
 
-# 檔名定義
-WATCHLIST_FILE = "my_watchlist_v10.json"
+# 設定頁面與檔案
+WATCHLIST_FILE = "my_watchlist.json"
 NAMES_FILE = "my_stock_names.json"
 
-# 載入名稱對照表
-def load_names():
-    if os.path.exists(NAMES_FILE):
-        with open(NAMES_FILE, "r") as f:
-            return json.load(f)
-    return {}
+# 初始化設定 (檢查檔案是否存在)
+def init_files():
+    if not os.path.exists(WATCHLIST_FILE):
+        with open(WATCHLIST_FILE, "w") as f: json.dump({"2330.TW": {"type": "已持股", "cost": 0, "qty": 0}}, f)
+    if not os.path.exists(NAMES_FILE):
+        with open(NAMES_FILE, "w") as f: json.dump({}, f)
 
-def save_names(names_dict):
-    with open(NAMES_FILE, "w") as f:
-        json.dump(names_dict, f)
+init_files()
 
-# 核心顯示名稱函數
-def get_display_name(ticker):
-    names = load_names()
-    return names.get(ticker, ticker) # 有自訂名稱就顯示，沒的話顯示代號
+# 資料抓取與緩存 (優化版：降低對 Yahoo 的請求頻率)
+@st.cache_data(ttl=600) # 快取時間拉長到 10 分鐘，避免 Too Many Requests
+def get_stock_info(ticker):
+    stock = yf.Ticker(ticker)
+    hist = stock.history(period="1mo")
+    return hist
 
-# ... (中間密碼與資料載入邏輯同前) ...
+# 介面渲染
+st.set_page_config(layout="wide")
+st.title("📈 個人化智慧看盤系統")
 
-# ===================================================
-# ⚙️ 頁籤二：股票管理控制台 (加入名稱編輯區)
-# ===================================================
-with control_tab:
-    col_left, col_right = st.columns([1, 1])
-    
-    with col_left:
-        st.subheader("📝 自訂股票名稱")
-        names_db = load_names()
-        target_stock = st.selectbox("選擇要改名的股票", list(st.session_state.watchlist.keys()))
-        new_name = st.text_input(f"設定 {target_stock} 的別名", value=names_db.get(target_stock, ""))
-        
-        if st.button("💾 儲存別名", use_container_width=True):
-            names_db[target_stock] = new_name
-            save_names(names_db)
-            st.success(f"已將 {target_stock} 命名為 {new_name}")
-            st.rerun()
-            
-        st.write("---")
-        # ... (其餘新增股票、刪除股票邏輯同前)
+# 使用 Tabs 來區分功能，解決 NameError 的問題
+tab1, tab2 = st.tabs(["核心戰情", "設定"])
+
+with tab1:
+    st.write("這是你的股票面板...")
+    # 這裡放入顯示卡片的邏輯
+
+with tab2:
+    st.write("這裡是編輯設定...")
+    # 這裡放入編輯名稱的邏輯
