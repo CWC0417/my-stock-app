@@ -7,24 +7,22 @@ import time
 import requests
 import datetime
 
-# 🌟 務必確保此行是第一個 Streamlit 指令
-st.set_page_config(page_title="個人化智慧看盤系統 v14.1", layout="wide")
+# 🌟 頁面設定
+st.set_page_config(page_title="個人化看盤系統 v15.0", layout="wide")
 
-# 🔑 密碼與檔案設定
+# 🔑 系統設定
 MY_PRIVATE_PASSWORD = "36333948" 
-WATCHLIST_FILE = "my_watchlist_v10.json"
+WATCHLIST_FILE = "my_watchlist_v15.json"
 NAMES_FILE = "my_stock_names.json"
-BACKUP_DATA_FILE = "my_stock_backup_data.json" # 儲存手動備援數據
-
-# 💡 提示：如果不想被雲端共用 IP 限制，可以去 https://finmindtrade.com/ 免費註冊會員並把 Token 貼在下方
+BACKUP_DATA_FILE = "my_stock_backup_data_v15.json"
 FINMIND_TOKEN = "" 
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
-# 1. 密碼鎖檢查
+# 1. 密碼鎖
 if not st.session_state.authenticated:
-    st.markdown("<h3 style='text-align: center; margin-top: 50px;'>🔒 歡迎來到個人看盤戰情室</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center; margin-top: 50px;'>🔒 歡迎來到個人看盤戰情室 (v15 究極版)</h3>", unsafe_allow_html=True)
     st.write("---")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -37,7 +35,7 @@ if not st.session_state.authenticated:
                 st.error("❌ 密碼錯誤")
     st.stop()
 
-# 2. 基礎檔案讀寫函數
+# 2. 檔案讀寫
 def load_json(filepath, default_data):
     if os.path.exists(filepath):
         try:
@@ -48,65 +46,72 @@ def load_json(filepath, default_data):
 def save_json(filepath, data):
     with open(filepath, "w") as f: json.dump(data, f)
 
-# 初始化庫存清單
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = load_json(WATCHLIST_FILE, {"2330.TW": {"type": "觀察中", "cost": 0.0, "qty": 0}})
 if "live_prices" not in st.session_state:
     st.session_state.live_prices = {}
 
-# 3. Yfinance 價格資料抓取
+# 3. Yfinance 抓取 (價格 + 估值 + 殖利率)
 @st.cache_data(ttl=600)
 def fetch_clean_stock_data(ticker_symbol):
     try:
         stock = yf.Ticker(ticker_symbol)
         hist = stock.history(period="6mo") 
-        if len(hist) < 65: return None, "歷史資料不足"
-        return hist, "OK"
+        if len(hist) < 65: return None, {}, "歷史資料不足"
+        
+        # 抓取估值與底氣 (台股資料有時會缺，需容錯)
+        info = stock.info
+        pe = info.get("trailingPE") or info.get("forwardPE")
+        yield_pct = info.get("dividendYield")
+        if yield_pct: yield_pct = round(yield_pct * 100, 2)
+        
+        val_data = {"pe": pe, "yield": yield_pct}
+        return hist, val_data, "OK"
     except Exception as e:
-        return None, str(e)
+        return None, {}, str(e)
 
-# 4. FinMind API 自動化核心 (內建極致抗塞車防護)
-@st.cache_data(ttl=1800) # 快取半小時，防狂刷網頁被鎖
+# 4. FinMind API (長線營收 6MA/12MA + 5日波段籌碼)
+@st.cache_data(ttl=1800)
 def fetch_tw_api_data(ticker_symbol, token=""):
     tw_id = ticker_symbol.split(".")[0]
     today = datetime.date.today()
-    start_date_chips = (today - datetime.timedelta(days=12)).strftime("%Y-%m-%d")
-    start_date_rev = (today - datetime.timedelta(days=65)).strftime("%Y-%m-%d")
+    # 籌碼抓 15 天確保有 5 個交易日，營收抓 400 天確保有 14 個月
+    start_date_chips = (today - datetime.timedelta(days=15)).strftime("%Y-%m-%d")
+    start_date_rev = (today - datetime.timedelta(days=400)).strftime("%Y-%m-%d")
     
-    res_dict = {"f_buy": None, "t_buy": None, "rev_yoy": None, "api_ok": False}
-    
-    # 建立請求參數
+    res_dict = {"net_buy_5d": None, "rev_6ma": None, "rev_12ma": None, "api_ok": False}
     base_params = {"data_id": tw_id}
     if token: base_params["token"] = token
         
     try:
-        # 抓取三大法人買賣超
+        # 抓取籌碼 (近5日法人累積)
         p_chips = base_params.copy()
         p_chips.update({"dataset": "TaiwanStockInstitutionalInvestorsBuySell", "start_date": start_date_chips})
-        req_chips = requests.get("https://api.finmindtrade.com/api/v4/data", params=p_chips, timeout=4).json()
+        req_chips = requests.get("https://api.finmindtrade.com/api/v4/data", params=p_chips, timeout=5).json()
         
         if req_chips.get("msg") == "success" and len(req_chips.get("data", [])) > 0:
             df_chips = pd.DataFrame(req_chips["data"])
-            latest_date = df_chips['date'].max()
-            df_latest = df_chips[df_chips['date'] == latest_date]
-            f_data = df_latest[df_latest['name'] == '外資及陸資(不含外資自營商)']['buy_sell'].sum()
-            t_data = df_latest[df_latest['name'] == '投信']['buy_sell'].sum()
-            res_dict["f_buy"] = int(f_data / 1000)
-            res_dict["t_buy"] = int(t_data / 1000)
-            res_dict["api_ok"] = True
+            target_inst = ['外資及陸資(不含外資自營商)', '投信']
+            df_target = df_chips[df_chips['name'].isin(target_inst)]
+            # 按日期加總後，取最後 5 天再加總
+            daily_net = df_target.groupby('date')['buy_sell'].sum()
+            net_buy_5d_shares = daily_net.tail(5).sum()
+            res_dict["net_buy_5d"] = int(net_buy_5d_shares / 1000) # 轉成張數
 
-        # 抓取每月營收
+        # 抓取營收 (6MA vs 12MA)
         p_rev = base_params.copy()
         p_rev.update({"dataset": "TaiwanStockMonthRevenue", "start_date": start_date_rev})
-        req_rev = requests.get("https://api.finmindtrade.com/api/v4/data", params=p_rev, timeout=4).json()
+        req_rev = requests.get("https://api.finmindtrade.com/api/v4/data", params=p_rev, timeout=5).json()
         
         if req_rev.get("msg") == "success" and len(req_rev.get("data", [])) > 0:
             df_rev = pd.DataFrame(req_rev["data"])
-            res_dict["rev_yoy"] = round(df_rev.iloc[-1].get("revenue_YearOverYearRatio", 0.0), 2)
-            res_dict["api_ok"] = True
+            if len(df_rev) >= 12:
+                res_dict["rev_6ma"] = df_rev['revenue'].tail(6).mean()
+                res_dict["rev_12ma"] = df_rev['revenue'].tail(12).mean()
+                res_dict["api_ok"] = True
             
     except:
-        res_dict["api_ok"] = False # 連線失敗或被擋，觸發手動備援
+        res_dict["api_ok"] = False 
         
     return res_dict
 
@@ -114,61 +119,76 @@ def get_display_name(ticker):
     names = load_json(NAMES_FILE, {})
     return names.get(ticker, ticker)
 
-# --- 介面架構生成 ---
-st.title("⚡ 個人化智慧看盤系統 v14.1")
-st.caption("🤖 雲端生產線特製版 │ 🔄 API 流量受限時自動切換「手動備援模式」 │ 🎯 20/60MA 雙防線")
+# --- 介面 ---
+st.title("⚡ 個人化看盤系統 v15.0 (究極版)")
+st.caption("🤖 導入長線營收趨勢 ｜ 🛡️ 殖利率底氣防禦 ｜ 📊 P/E 估值評價 ｜ 👤 5日波段籌碼")
 
-# 這裡完美定義兩個頁籤，徹底解決 NameError
-main_tab, control_tab = st.tabs(["📈 核心戰情面板", "⚙️ 股票管理控制台"])
+main_tab, control_tab = st.tabs(["📈 核心戰情面板", "⚙️ 股票管理與手動備援"])
 
 # ===================================================
 # 📈 頁籤一：核心戰情面板
 # ===================================================
 with main_tab:
     if not st.session_state.watchlist:
-        st.warning("目前清單空空如也，請切換到「⚙️ 控制台」新增股票！")
+        st.warning("請切換到「⚙️ 控制台」新增股票！")
     else:
         col_ctrl1, col_ctrl2 = st.columns([1, 1])
-        with col_ctrl1:
-            view_mode = st.radio("顯示模式", ["📱 手機卡片 (推薦)", "📋 完整表格 (電腦)"], horizontal=True, key="v_mode")
-        with col_ctrl2:
-            ma_strategy = st.radio("買點防線策略", ["波段操作 (20MA 月線)", "長線大底 (60MA 季線)"], horizontal=True, key="ma_strat")
+        with col_ctrl1: view_mode = st.radio("顯示模式", ["📱 手機卡片 (推薦)", "📋 完整表格"], horizontal=True, key="v_mode")
+        with col_ctrl2: ma_strategy = st.radio("買點策略", ["波段操作 (20MA)", "長線大底 (60MA)"], horizontal=True, key="ma_strat")
             
         st.write("---")
         rows = []
-        backup_db = load_json(BACKUP_DATA_FILE, {}) # 讀取手動輸入作為備援
+        backup_db = load_json(BACKUP_DATA_FILE, {}) 
         
         for ticker_symbol, item in st.session_state.watchlist.items():
             stock_name = get_display_name(ticker_symbol)
-            hist, status = fetch_clean_stock_data(ticker_symbol)
+            hist, val_data, status = fetch_clean_stock_data(ticker_symbol)
             if hist is None: continue
 
-            # 🤖 嘗試呼叫自動化 API
+            # 🤖 API 資料與備援切換
             api_res = fetch_tw_api_data(ticker_symbol, token=FINMIND_TOKEN)
-            backup_item = backup_db.get(ticker_symbol, {"f_buy": 0, "t_buy": 0, "rev_yoy": 0.0})
+            b_item = backup_db.get(ticker_symbol, {"net_buy_5d": 0, "rev_6ma": 0, "rev_12ma": 0, "pe": 15, "yield": 0})
             
-            # 🔄 智慧判定：如果 API 壞了，直接用手動備援資料！
-            if api_res["api_ok"] and api_res["f_buy"] is not None:
-                f_buy, t_buy, rev_yoy = api_res["f_buy"], api_res["t_buy"], api_res["rev_yoy"]
-                mode_tag = "🤖 自動"
+            if api_res["api_ok"] and api_res["net_buy_5d"] is not None:
+                net_buy_5d = api_res["net_buy_5d"]
+                rev_6ma, rev_12ma = api_res["rev_6ma"], api_res["rev_12ma"]
+                mode_tag = "🤖"
             else:
-                f_buy, t_buy, rev_yoy = backup_item["f_buy"], backup_item["t_buy"], backup_item["rev_yoy"]
-                mode_tag = "✍️ 備援"
+                net_buy_5d = b_item["net_buy_5d"]
+                rev_6ma, rev_12ma = b_item["rev_6ma"], b_item["rev_12ma"]
+                mode_tag = "✍️備援"
 
-            # 📊 籌碼與營收燈號判讀
-            total_inst = f_buy + t_buy
-            if total_inst > 500: chips_status = f"🟢 法人買超 (+{total_inst}張)"
-            elif total_inst < -500: chips_status = f"🔴 法人賣超 ({total_inst}張)"
-            else: chips_status = f"🟡 籌碼中性 ({total_inst}張)"
-                
-            if rev_yoy >= 10.0: fund_status = f"🟢 營收高成長 (+{rev_yoy}%)"
-            elif rev_yoy < 0.0: fund_status = f"🔴 營收衰退中 ({rev_yoy}%)"
-            else: fund_status = f"🟡 營收平穩 (+{rev_yoy}%)"
+            # 優先使用 yfinance 估值，若無則用手動備援
+            pe = val_data.get("pe") if val_data.get("pe") else b_item.get("pe", 0)
+            yield_pct = val_data.get("yield") if val_data.get("yield") else b_item.get("yield", 0)
 
-            # 均線技術計算
+            # 📊 邏輯 1: 估值的藝術
+            if pe and pe > 0:
+                if pe < 12: pe_status = f"🟢 便宜委屈 (PE: {pe:.1f})"
+                elif 12 <= pe <= 20: pe_status = f"🟡 估值合理 (PE: {pe:.1f})"
+                else: pe_status = f"🔴 高度夢想 (PE: {pe:.1f} 昂貴)"
+            else: pe_status = "⚪ 無本益比資料"
+
+            # 🛡️ 邏輯 2: 下檔防禦底氣
+            if yield_pct and yield_pct >= 4.5: yield_status = f"🟢 高殖利率護體 ({yield_pct:.1f}%)"
+            elif yield_pct and yield_pct > 0: yield_status = f"🟡 具備基本配息 ({yield_pct:.1f}%)"
+            else: yield_status = "⚪ 無配息保護"
+
+            # 📈 邏輯 3: 長線營收趨勢
+            if rev_6ma and rev_12ma:
+                if rev_6ma > rev_12ma: rev_status = "🟢 長線營收黃金交叉 (6MA > 12MA)"
+                else: rev_status = "🔴 長線營收死亡交叉 (6MA < 12MA)"
+            else: rev_status = "⚪ 營收資料不足"
+
+            # 👤 邏輯 4: 籌碼防騙炮 (5日累積)
+            if net_buy_5d > 1500: chips_status = f"🟢 波段真買盤 (+{net_buy_5d}張)"
+            elif net_buy_5d < -1500: chips_status = f"🔴 倒貨大拍賣 ({net_buy_5d}張)"
+            else: chips_status = f"🟡 籌碼震盪中 ({net_buy_5d}張)"
+
+            # 價格與技術面
             net_price = hist['Close'].iloc[-1]
             price = st.session_state.live_prices.get(ticker_symbol, net_price)
-            price_display = f"⚡ {price:.2f} (即時)" if ticker_symbol in st.session_state.live_prices else f"🌐 {price:.2f} (網路)"
+            price_display = f"⚡ {price:.2f}" if ticker_symbol in st.session_state.live_prices else f"🌐 {price:.2f}"
             
             hist['MA20'] = hist['Close'].rolling(window=20).mean()
             hist['MA60'] = hist['Close'].rolling(window=60).mean()
@@ -177,19 +197,15 @@ with main_tab:
             
             target_ma = hist['MA20'].iloc[-1] if "20MA" in ma_strategy else hist['MA60'].iloc[-1]
             ma_label = "20MA" if "20MA" in ma_strategy else "60MA"
-            
-            if pd.notna(target_ma) and target_ma > 0:
-                buy_range_str = f"{target_ma:.2f} ~ {target_ma * 1.05:.2f} 元"
-            else:
-                buy_range_str = "計算中..."
+            buy_range_str = f"{target_ma:.2f} ~ {target_ma * 1.05:.2f}" if pd.notna(target_ma) else "計算中"
 
             v_ma5, v_ma20 = hist['VolMA5'].iloc[-1], hist['VolMA20'].iloc[-1]
-            volume_status = "🟢 成功量縮" if v_ma5 < v_ma20 else "🟡 尚未量縮"
+            vol_status = "🟢 成功量縮" if v_ma5 < v_ma20 else "🟡 尚未量縮"
             
-            open_p, close_p, high_p, low_p = hist['Open'].iloc[-1], hist['Close'].iloc[-1], hist['High'].iloc[-1], hist['Low'].iloc[-1]
-            k_range = high_p - low_p
-            is_stop_drop = (k_range > 0 and ((min(open_p, close_p) - low_p) / k_range) >= 0.4) or (close_p > open_p)
-            k_status = "🟢 出現止跌訊號" if is_stop_drop else "🔴 黑K下殺中"
+            op, cp, hp, lp = hist['Open'].iloc[-1], hist['Close'].iloc[-1], hist['High'].iloc[-1], hist['Low'].iloc[-1]
+            k_range = hp - lp
+            is_stop_drop = (k_range > 0 and ((min(op, cp) - lp) / k_range) >= 0.4) or (cp > op)
+            k_status = "🟢 止跌收紅/留長下影" if is_stop_drop else "🔴 尚未止跌"
             
             # 停損計算
             historical_max = hist['Close'].max()
@@ -199,28 +215,32 @@ with main_tab:
                 pnl = (price - item["cost"]) * item["qty"]
                 roi = (pnl / (item["cost"] * item["qty"]) * 100) if item["cost"] > 0 else 0
                 pnl_str = f"{pnl:,.0f} 元 ({roi:+.1f}%)"
-                hold_action = "🚨 移動停損防線！" if price < trailing_stop_line else "🍏 續抱安全區"
+                if price < trailing_stop_line: hold_action = "🚨 跌破高點10%！技術面轉弱，請重新審視基本面！"
+                else: hold_action = "🍏 續抱安全區"
             else:
                 pnl_str, hold_action = "—", "觀察中"
                 
             rows.append({
-                "代碼": ticker_symbol, "名稱": stock_name, "狀態": item["type"], "當前價格 (元)": price_display, 
-                f"🛒 買入區間 ({ma_label})": buy_range_str, "👤 法人籌碼": chips_status, "📈 最新營收": fund_status,
-                "量能狀態": volume_status, "K線型態": k_status, "🚨 警報": hold_action, "目前總損益": pnl_str, "來源": mode_tag
+                "代碼": ticker_symbol, "名稱": stock_name, "現價": price_display, 
+                "防線": buy_range_str, "🎯 估值": pe_status, "🛡️ 底氣": yield_status, 
+                "📈 營收": rev_status, "👤 波段籌碼": chips_status, 
+                "指標": f"{vol_status} | {k_status}", "🚨 警報": hold_action, "損益": pnl_str, "來源": mode_tag
             })
 
-        # 渲染畫面
-        if view_mode == "📋 完整表格 (電腦)":
+        if view_mode == "📋 完整表格":
             st.dataframe(pd.DataFrame(rows), use_container_width=True)
         else:
             for r in rows:
-                with st.expander(f"📈 {r['名稱']} ({r['代碼']}) ｜ {r['當前價格 (元)']} ｜ 🛑 {r['🚨 警報']}"):
-                    st.markdown(f"**🛒 買入區間 ({ma_label})：** <font color='#66ff66'>**{r[f'🛒 買入區間 ({ma_label})']}**</font>", unsafe_allow_html=True)
+                with st.expander(f"📈 {r['名稱']} ({r['代碼']}) ｜ {r['現價']} ｜ 🛑 {r['🚨 警報']}"):
+                    st.markdown(f"**🛒 買入防線 ({ma_label})：** <font color='#66ff66'>**{r['防線']}**</font>", unsafe_allow_html=True)
                     st.markdown(f"---")
-                    st.markdown(f"**👤 法人籌碼：** {r['👤 法人籌碼']} `[{r['來源']}]`")
-                    st.markdown(f"**📈 最新營收：** {r['📈 最新營收']} `[{r['來源']}]`")
-                    st.markdown(f"**📊 技術指標：** {r['量能狀態']} ｜ {r['K線型態']}")
-                    st.markdown(f"**💰 持股損益：** {r['目前總損益']}")
+                    st.markdown(f"**🎯 估值藝術：** {r['🎯 估值']} *(由 yfinance 提供)*")
+                    st.markdown(f"**🛡️ 投資底氣：** {r['🛡️ 底氣']} *(由 yfinance 提供)*")
+                    st.markdown(f"**📈 長線營收：** {r['📈 營收']} `[{r['來源']}]`")
+                    st.markdown(f"**👤 波段籌碼：** {r['👤 波段籌碼']} *(近5日外資+投信總和)* `[{r['來源']}]`")
+                    st.markdown(f"---")
+                    st.markdown(f"**📊 技術面確認：** {r['指標']}")
+                    st.markdown(f"**💰 持股狀態：** {r['損益']}")
 
 # ===================================================
 # ⚙️ 頁籤二：股票管理控制台
@@ -229,47 +249,39 @@ with control_tab:
     col_left, col_right = st.columns([1, 1])
     
     with col_left:
-        st.subheader("✍️ 籌碼與營收【手動備援輸入區】")
-        st.caption("💡 當雲端 API 被流量限制亮紅燈時，系統會自動改抓這裡你輸入的數字來判斷紅綠燈！")
+        st.subheader("✍️ 進階數據【手動備援區】")
+        st.caption("當 API 抓不到某些偏門股票的本益比、殖利率或被阻擋時，從這裡手動覆蓋。")
         
         if st.session_state.watchlist:
             backup_db = load_json(BACKUP_DATA_FILE, {})
-            target_b = st.selectbox("選擇要手動備援的股票", list(st.session_state.watchlist.keys()), key="sb")
-            cur_b = backup_db.get(target_b, {"f_buy": 0, "t_buy": 0, "rev_yoy": 0.0})
+            tgt_b = st.selectbox("選擇要備援的股票", list(st.session_state.watchlist.keys()), key="sb")
+            cur_b = backup_db.get(tgt_b, {"net_buy_5d": 0, "rev_6ma": 1, "rev_12ma": 0, "pe": 0, "yield": 0})
             
-            in_f = st.number_input("外資近幾日買賣超 (張)", value=int(cur_b.get("f_buy", 0)), step=100, key="if")
-            in_t = st.number_input("投信近幾日買賣超 (張)", value=int(cur_b.get("t_buy", 0)), step=100, key="it")
-            in_rev = st.number_input("最新單月營收年增率 (YoY %)", value=float(cur_b.get("rev_yoy", 0.0)), step=1.0, key="ir")
+            pe_in = st.number_input("手動本益比 (PE)", value=float(cur_b.get("pe", 0)), step=1.0)
+            y_in = st.number_input("手動殖利率 (%)", value=float(cur_b.get("yield", 0)), step=0.1)
+            chip_in = st.number_input("近 5 日法人累積買超 (張)", value=int(cur_b.get("net_buy_5d", 0)), step=100)
+            
+            st.markdown("**營收趨勢模擬 (輸入大於0的數字即可)**")
+            r6 = st.number_input("6MA 營收水位", value=float(cur_b.get("rev_6ma", 1)), step=10.0)
+            r12 = st.number_input("12MA 營收水位", value=float(cur_b.get("rev_12ma", 0)), step=10.0)
             
             if st.button("💾 儲存備援數據", use_container_width=True):
-                backup_db[target_b] = {"f_buy": in_f, "t_buy": in_t, "rev_yoy": in_rev}
+                backup_db[tgt_b] = {"net_buy_5d": chip_in, "rev_6ma": r6, "rev_12ma": r12, "pe": pe_in, "yield": y_in}
                 save_json(BACKUP_DATA_FILE, backup_db)
-                st.success("備援數據儲存成功！若 API 被阻擋，系統將自動以此數值進行研判。")
+                st.success("備援數據儲存成功！")
                 time.sleep(0.5)
                 st.rerun()
-
-        st.write("---")
-        st.subheader("🔥 盤中即時價覆蓋")
-        if st.session_state.watchlist:
-            target_stock_price = st.selectbox("選擇股票點選現價", list(st.session_state.watchlist.keys()), key="p_tgt")
-            input_p = st.number_input(f"輸入 {target_stock_price} 即時價", min_value=0.0, step=0.1, key="ip_val")
-            if st.button("⚡ 同步現價", use_container_width=True):
-                if input_p > 0:
-                    st.session_state.live_prices[target_stock_price] = input_p
-                    st.success("現價同步成功！")
-                    time.sleep(0.5)
-                    st.rerun()
 
     with col_right:
         st.subheader("➕ 新增 / 編輯庫存股票")
         names_db = load_json(NAMES_FILE, {})
-        new_stock = st.text_input("股票代碼 (例: 2330.TW)", placeholder="2330.TW", key="ns_id").upper().strip()
-        custom_name = st.text_input("股票中文別名 (例: 台積電)", placeholder="台積電", key="ns_nm")
-        stock_type = st.selectbox("類別", ["觀察中 (尚未買進)", "已持股"], key="ns_tp")
+        new_stock = st.text_input("股票代碼 (例: 2330.TW)").upper().strip()
+        custom_name = st.text_input("股票中文別名 (例: 台積電)")
+        stock_type = st.selectbox("類別", ["觀察中 (尚未買進)", "已持股"])
         cost, qty = 0.0, 0
         if stock_type == "已持股":
-            cost = st.number_input("買入成本價", min_value=0.0, step=0.1, key="ns_cs")
-            qty = st.number_input("持有股數", min_value=0, step=100, key="ns_qt")
+            cost = st.number_input("買入成本價", min_value=0.0, step=0.1)
+            qty = st.number_input("持有股數", min_value=0, step=100)
             
         if st.button("💾 確認儲存股票", use_container_width=True):
             if new_stock:
@@ -284,12 +296,13 @@ with control_tab:
                 st.rerun()
 
         st.write("---")
-        st.subheader("🗑️ 刪除庫存股票")
+        st.subheader("🔥 盤中現價同步")
         if st.session_state.watchlist:
-            for stock_id in list(st.session_state.watchlist.keys()):
-                if st.button(f"❌ 刪除 {stock_id}", key=f"del_{stock_id}", use_container_width=True):
-                    if stock_id in st.session_state.live_prices: del st.session_state.live_prices[stock_id]
-                    del st.session_state.watchlist[stock_id]
-                    save_json(WATCHLIST_FILE, st.session_state.watchlist)
-                    st.cache_data.clear()
+            tgt_p = st.selectbox("選擇股票點選現價", list(st.session_state.watchlist.keys()))
+            input_p = st.number_input(f"輸入 {tgt_p} 即時價", min_value=0.0, step=0.1)
+            if st.button("⚡ 同步現價", use_container_width=True):
+                if input_p > 0:
+                    st.session_state.live_prices[tgt_p] = input_p
+                    st.success("現價同步成功！")
+                    time.sleep(0.5)
                     st.rerun()
