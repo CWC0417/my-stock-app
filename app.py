@@ -11,7 +11,7 @@ import datetime
 st.set_page_config(page_title="個人化智慧看盤系統 v15.3", layout="wide")
 
 # 🔑 系統密碼與檔案設定
-MY_PRIVATE_PASSWORD = "1234" 
+MY_PRIVATE_PASSWORD = "36333948" 
 WATCHLIST_FILE = "my_watchlist_v15.json"
 NAMES_FILE = "my_stock_names.json"
 BACKUP_DATA_FILE = "my_stock_backup_data_v15.json"
