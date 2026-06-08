@@ -11,14 +11,14 @@ WATCHLIST_FILE = "my_watchlist_v15.json"
 NAMES_FILE = "my_stock_names.json"
 BACKUP_DATA_FILE = "my_stock_backup_data_v15.json"
 
-st.set_page_config(page_title="個人化智慧看盤系統 v15.8", layout="wide")
+st.set_page_config(page_title="個人化智慧看盤系統 v15.9", layout="wide")
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 # 1. 密碼鎖
 if not st.session_state.authenticated:
-    st.markdown("<h3 style='text-align: center; margin-top: 50px;'>🔒 歡迎來到個人看盤戰情室 (v15.8)</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center; margin-top: 50px;'>🔒 歡迎來到個人看盤戰情室 (v15.9)</h3>", unsafe_allow_html=True)
     st.write("---")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -62,8 +62,8 @@ def get_display_name(ticker):
     return names.get(ticker, ticker)
 
 # --- 介面啟動 ---
-st.title("📊 個人化智慧看盤系統 v15.8")
-st.caption("🪵 ETF 友善相容版 │ 自動識別 0 值的無營收/無本益比狀態 │ 排除燈號誤判")
+st.title("📊 個人化智慧看盤系統 v15.9")
+st.caption("🪵 6MA / 12MA 營收成長戰略版 │ 自動識別 0 值的無營收/無本益比狀態")
 
 main_tab, control_tab = st.tabs(["核心戰情", "設定後台"])
 backup_db = load_json(BACKUP_DATA_FILE, {}) 
@@ -72,7 +72,7 @@ with main_tab:
     if not st.session_state.watchlist:
         st.info("目前清單空空如也，請切換到「設定後台」新增股票！")
     else:
-        ma_strategy = st.radio("買點策略", ["波段操作 (20MA)", "長線大底 (60MA)"], horizontal=True, key="ma_strat_158")
+        ma_strategy = st.radio("買點策略", ["波段操作 (20MA)", "長線大底 (60MA)"], horizontal=True, key="ma_strat_159")
         st.write("---")
         
         for ticker_symbol, item in st.session_state.watchlist.items():
@@ -80,18 +80,18 @@ with main_tab:
             hist, val_data, status = fetch_clean_stock_data(ticker_symbol)
             if hist is None: continue
 
-            # 🛠️ 預設值全面改為 0.0，利於新股票或 ETF 初始化
-            b_item = backup_db.get(ticker_symbol, {"net_buy_5d": 0, "m_rev_1": 0.0, "m_rev_2": 0.0, "pe": 0.0, "yield": 0.0})
+            # 🛠️ 預設值全面改為 0.0，全面導入 6MA 與 12MA 欄位
+            b_item = backup_db.get(ticker_symbol, {"net_buy_5d": 0, "rev_6ma": 0.0, "rev_12ma": 0.0, "pe": 0.0, "yield": 0.0})
             
             net_buy_5d = b_item.get("net_buy_5d", 0)
-            m_rev_1 = b_item.get("m_rev_1", 0.0) 
-            m_rev_2 = b_item.get("m_rev_2", 0.0) 
+            rev_6ma = b_item.get("rev_6ma", 0.0) 
+            rev_12ma = b_item.get("rev_12ma", 0.0) 
 
             # 嚴謹的資料排除流向
             pe = val_data.get("pe") if val_data.get("pe") is not None else b_item.get("pe", 0.0)
             yield_pct = val_data.get("yield") if val_data.get("yield") is not None else b_item.get("yield", 0.0)
 
-            # 🧠 修正本益比 0 值的 ETF 誤判
+            # 🧠 本益比 0 判斷
             if pe == 0:
                 pe_status = "不適用 (ETF)"
                 pe_color = "⚪"
@@ -99,7 +99,7 @@ with main_tab:
                 pe_status = f"便宜 ({pe:.1f})" if pe < 12 else (f"合理 ({pe:.1f})" if pe <= 20 else f"昂貴 ({pe:.1f})")
                 pe_color = "🟢" if pe < 12 else ("🟡" if pe <= 20 else "🔴")
             
-            # 🧠 修正殖利率 0 值的無配息狀態
+            # 🧠 殖利率 0 判斷
             if yield_pct == 0:
                 yield_status = "無配息"
                 yield_color = "⚪"
@@ -107,13 +107,13 @@ with main_tab:
                 yield_status = f"高殖利率 ({yield_pct:.1f}%)" if yield_pct >= 4.5 else f"一般 ({yield_pct:.1f}%)"
                 yield_color = "🟢" if yield_pct >= 4.5 else "🟡"
             
-            # 🧠 修正營收同時為 0 值的 ETF 誤判
-            if m_rev_1 == 0 and m_rev_2 == 0:
+            # 🧠 【升級核心】營收 6MA > 12MA 交叉判定與 ETF 排除
+            if rev_6ma == 0 and rev_12ma == 0:
                 rev_status = "⚪ 不適用 (ETF/無營收)"
-            elif m_rev_1 >= m_rev_2:
-                rev_status = f"🟢 多頭 (本月 {m_rev_1:,.0f} > 上月 {m_rev_2:,.0f})"
+            elif rev_6ma >= rev_12ma:
+                rev_status = f"🟢 多頭 (6MA {rev_6ma:,.2f} > 12MA {rev_12ma:,.2f})"
             else:
-                rev_status = f"🔴 衰退 (本月 {m_rev_1:,.0f} < 上月 {m_rev_2:,.0f})"
+                rev_status = f"🔴 衰退 (6MA {rev_6ma:,.2f} < 12MA {rev_12ma:,.2f})"
             
             if net_buy_5d > 1500: chips_status = f"🟢 主力大買 (+{net_buy_5d}張)"
             elif net_buy_5d < -1500: chips_status = f"🔴 主力大賣 ({net_buy_5d}張)"
@@ -159,10 +159,10 @@ with main_tab:
                 
                 st.markdown(f"**🛒 理想買入防線 ({ma_label})：** **{buy_range_str} 元**")
                 st.markdown(f"**🎯 估值區間 (P/E)：** {pe_color} {pe_status} ｜ **🛡 股息底氣：** {yield_color} {yield_status}")
-                st.markdown(f"**📈 月營收趨勢：** {rev_status} ｜ **👤 主力籌碼：** {chips_status}")
+                st.markdown(f"**📈 營收趨勢判定 (6MA vs 12MA)：** {rev_status} ｜ **👤 主力籌碼：** {chips_status}")
 
 # ===================================================
-# ⚙ 設定面板 (v15.8 記憶體與 0 值防呆優化版)
+# ⚙ 設定面板 (v15.9 配合 6MA/12MA 配置)
 # ===================================================
 with control_tab:
     col_left, col_right = st.columns([1, 1])
@@ -185,24 +185,29 @@ with control_tab:
                 st.cache_data.clear(); st.success(f"股票 {new_stock} 儲存成功！"); time.sleep(0.5); st.rerun()
 
     with col_right:
-        st.subheader("✍ 填寫手動數據")
+        st.subheader("✍ 🛠️ 進階數據【手動備援區】")
         if st.session_state.watchlist:
             tgt_b = st.selectbox("選擇要備援的股票", list(st.session_state.watchlist.keys()), key="select_target_stock_box")
             
-            # 預設值調整為 0.0 方便直接留空
-            cur_b = backup_db.get(tgt_b, {"net_buy_5d": 0, "m_rev_1": 0.0, "m_rev_2": 0.0, "pe": 0.0, "yield": 0.0})
+            # 從資料庫提取（相容舊版本 key，若無則預設為 0.0）
+            cur_b = backup_db.get(tgt_b, {})
+            v_pe = float(cur_b.get("pe", 0.0))
+            v_yield = float(cur_b.get("yield", 0.0))
+            v_chip = int(cur_b.get("net_buy_5d", 0))
+            v_6ma = float(cur_b.get("rev_6ma", cur_b.get("m_rev_1", 0.0))) # 升級相容
+            v_12ma = float(cur_b.get("rev_12ma", cur_b.get("m_rev_2", 0.0))) # 升級相容
             
-            pe_in = st.number_input("手動本益比 (PE) *若為 ETF 請填 0*", value=float(cur_b.get("pe", 0.0)), key=f"pe_in_{tgt_b}")
-            y_in = st.number_input("手動殖利率 (%) *可輸入最新預估值*", value=float(cur_b.get("yield", 0.0)), key=f"yield_in_{tgt_b}")
-            chip_in = st.number_input("近 5 日法人累積買超 (張)", value=int(cur_b.get("net_buy_5d", 0)), key=f"chip_in_{tgt_b}")
+            pe_in = st.number_input("手動本益比 (PE) *若為 ETF 請填 0*", value=v_pe, key=f"pe_in_{tgt_b}")
+            y_in = st.number_input("手動殖利率 (%) *若為 ETF 請填 0*", value=v_yield, key=f"yield_in_{tgt_b}")
+            chip_in = st.number_input("近 5 日法人累積買超 (張)", value=v_chip, key=f"chip_in_{tgt_b}")
             
             st.write("---")
-            st.markdown("#### 📈 營收數據備援（直接填寫網站數值）")
-            rev1_in = st.number_input("最新月份營收 *若為 ETF 請填 0*", value=float(cur_b.get("m_rev_1", 0.0)), key=f"rev1_in_{tgt_b}")
-            rev2_in = st.number_input("前個月份營收 *若為 ETF 請填 0*", value=float(cur_b.get("m_rev_2", 0.0)), key=f"rev2_in_{tgt_b}")
+            st.markdown("#### 📈 營收數據備援（直接填寫網站 6MA / 12MA 數值）")
+            rev6ma_in = st.number_input("6MA 營收水位 *若為 ETF 請填 0*", value=v_6ma, key=f"rev6ma_in_{tgt_b}", step=10.0)
+            rev12ma_in = st.number_input("12MA 營收水位 *若為 ETF 請填 0*", value=v_12ma, key=f"rev12ma_in_{tgt_b}", step=10.0)
             
             if st.button("💾 儲存並同步到卡片", use_container_width=True, key=f"save_backup_btn_{tgt_b}"):
-                backup_db[tgt_b] = {"net_buy_5d": chip_in, "m_rev_1": rev1_in, "m_rev_2": rev2_in, "pe": pe_in, "yield": y_in}
+                backup_db[tgt_b] = {"net_buy_5d": chip_in, "rev_6ma": rev6ma_in, "rev_12ma": rev12ma_in, "pe": pe_in, "yield": y_in}
                 save_json(BACKUP_DATA_FILE, backup_db)
-                st.success(f"✨ {tgt_b} 專屬數據同步成功！")
+                st.success(f"✨ {tgt_b} 專屬 6MA/12MA 數據同步成功！")
                 time.sleep(0.5); st.rerun()
