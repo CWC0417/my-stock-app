@@ -11,15 +11,14 @@ WATCHLIST_FILE = "my_watchlist_v15.json"
 NAMES_FILE = "my_stock_names.json"
 BACKUP_DATA_FILE = "my_stock_backup_data_v15.json"
 
-# 🖥️ 固定寬螢幕模式
-st.set_page_config(page_title="個人化智慧看盤系統 v16.2", layout="wide")
+st.set_page_config(page_title="個人化智慧看盤系統 v16.3", layout="wide")
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 # 1. 密碼鎖
 if not st.session_state.authenticated:
-    st.markdown("<h3 style='text-align: center; margin-top: 50px;'>🔒 歡迎來到個人看盤戰情室 (v16.2)</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center; margin-top: 50px;'>🔒 歡迎來到個人看盤戰情室 (v16.3)</h3>", unsafe_allow_html=True)
     st.write("---")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -42,7 +41,7 @@ def save_json(filepath, data):
     with open(filepath, "w") as f: json.dump(data, f)
 
 if "watchlist" not in st.session_state:
-    st.session_state.watchlist = load_json(WATCHLIST_FILE, {"2330.TW": {"type": "觀察中", "cost": 0.0, "qty": 0}})
+    st.session_state.watchlist = load_json(WATCHLIST_FILE, {})
 
 # 3. yfinance 核心價格引擎
 @st.cache_data(ttl=300)
@@ -63,8 +62,8 @@ def get_display_name(ticker):
     return names.get(ticker, ticker)
 
 # --- 介面啟動 ---
-st.title("📊 個人化智慧看盤系統 v16.2")
-st.caption("🪵 6MA / 12MA 戰略版 │ 智慧防誤判 │ ☁️ 整合雲端本機備援機制（防重啟洗掉）")
+st.title("📊 個人化智慧看盤系統 v16.3")
+st.caption("🪵 6MA / 12MA 戰略版 │ ☁️ 雲端備援機制 │ 🔍 除錯顯影升級 (防空白畫面)")
 
 main_tab, control_tab = st.tabs(["核心戰情", "設定後台"])
 backup_db = load_json(BACKUP_DATA_FILE, {}) 
@@ -73,13 +72,17 @@ with main_tab:
     if not st.session_state.watchlist:
         st.info("💡 目前雲端記憶體已重置。請切換到「設定後台」上傳您的備份檔，或重新新增股票！")
     else:
-        ma_strategy = st.radio("買點策略", ["波段操作 (20MA)", "長線大底 (60MA)"], horizontal=True, key="ma_strat_162")
+        ma_strategy = st.radio("買點策略", ["波段操作 (20MA)", "長線大底 (60MA)"], horizontal=True, key="ma_strat_163")
         st.write("---")
         
         for ticker_symbol, item in st.session_state.watchlist.items():
             stock_name = get_display_name(ticker_symbol)
             hist, val_data, status = fetch_clean_stock_data(ticker_symbol)
-            if hist is None: continue
+            
+            # 🛑 核心修正：如果抓不到股價，不要偷偷消失，顯示警告！
+            if hist is None: 
+                st.warning(f"⚠️ 暫時無法取得 【{stock_name} ({ticker_symbol})】 的即時股價資料。請至後台確認代碼是否正確 (需加上 .TW)，或稍候再試。")
+                continue
 
             b_item = backup_db.get(ticker_symbol, {"net_buy_5d": 0, "rev_6ma": 0.0, "rev_12ma": 0.0, "pe": 0.0, "yield": 0.0})
             net_buy_5d = b_item.get("net_buy_5d", 0)
@@ -157,16 +160,14 @@ with main_tab:
                 st.markdown(f"**📈 營收趨勢判定 (6MA vs 12MA)：** {rev_status} ｜ **👤 主力籌碼：** {chips_status}")
 
 # ===================================================
-# ⚙ 設定面板 (新增雲端備份防爆區)
+# ⚙ 設定面板 (雲端備份防爆區)
 # ===================================================
 with control_tab:
-    # 🌟 【核心新增】Streamlit Cloud 專用本機備份與還原中樞
     st.markdown("### ☁️ Streamlit Cloud 專用：本機資料備份與還原中樞")
     col_bak1, col_bak2 = st.columns(2)
     
     with col_bak1:
         st.write("① 狀態保存：將目前所有股票、別名、6MA營收數據打包下載")
-        # 整合包資料打包
         names_db_current = load_json(NAMES_FILE, {})
         bundle_data = {
             "watchlist": st.session_state.watchlist,
