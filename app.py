@@ -11,14 +11,15 @@ WATCHLIST_FILE = "my_watchlist_v15.json"
 NAMES_FILE = "my_stock_names.json"
 BACKUP_DATA_FILE = "my_stock_backup_data_v15.json"
 
-st.set_page_config(page_title="個人化智慧看盤系統 v15.9", layout="wide")
+# 🖥️ 固定寬螢幕模式
+st.set_page_config(page_title="個人化智慧看盤系統 v16.2", layout="wide")
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 # 1. 密碼鎖
 if not st.session_state.authenticated:
-    st.markdown("<h3 style='text-align: center; margin-top: 50px;'>🔒 歡迎來到個人看盤戰情室 (v15.9)</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center; margin-top: 50px;'>🔒 歡迎來到個人看盤戰情室 (v16.2)</h3>", unsafe_allow_html=True)
     st.write("---")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -62,17 +63,17 @@ def get_display_name(ticker):
     return names.get(ticker, ticker)
 
 # --- 介面啟動 ---
-st.title("📊 個人化智慧看盤系統 v15.9")
-st.caption("🪵 6MA / 12MA 營收成長戰略版 │ 自動識別 0 值的無營收/無本益比狀態")
+st.title("📊 個人化智慧看盤系統 v16.2")
+st.caption("🪵 6MA / 12MA 戰略版 │ 智慧防誤判 │ ☁️ 整合雲端本機備援機制（防重啟洗掉）")
 
 main_tab, control_tab = st.tabs(["核心戰情", "設定後台"])
 backup_db = load_json(BACKUP_DATA_FILE, {}) 
 
 with main_tab:
     if not st.session_state.watchlist:
-        st.info("目前清單空空如也，請切換到「設定後台」新增股票！")
+        st.info("💡 目前雲端記憶體已重置。請切換到「設定後台」上傳您的備份檔，或重新新增股票！")
     else:
-        ma_strategy = st.radio("買點策略", ["波段操作 (20MA)", "長線大底 (60MA)"], horizontal=True, key="ma_strat_159")
+        ma_strategy = st.radio("買點策略", ["波段操作 (20MA)", "長線大底 (60MA)"], horizontal=True, key="ma_strat_162")
         st.write("---")
         
         for ticker_symbol, item in st.session_state.watchlist.items():
@@ -80,18 +81,14 @@ with main_tab:
             hist, val_data, status = fetch_clean_stock_data(ticker_symbol)
             if hist is None: continue
 
-            # 🛠️ 預設值全面改為 0.0，全面導入 6MA 與 12MA 欄位
             b_item = backup_db.get(ticker_symbol, {"net_buy_5d": 0, "rev_6ma": 0.0, "rev_12ma": 0.0, "pe": 0.0, "yield": 0.0})
-            
             net_buy_5d = b_item.get("net_buy_5d", 0)
             rev_6ma = b_item.get("rev_6ma", 0.0) 
             rev_12ma = b_item.get("rev_12ma", 0.0) 
 
-            # 嚴謹的資料排除流向
             pe = val_data.get("pe") if val_data.get("pe") is not None else b_item.get("pe", 0.0)
             yield_pct = val_data.get("yield") if val_data.get("yield") is not None else b_item.get("yield", 0.0)
 
-            # 🧠 本益比 0 判斷
             if pe == 0:
                 pe_status = "不適用 (ETF)"
                 pe_color = "⚪"
@@ -99,7 +96,6 @@ with main_tab:
                 pe_status = f"便宜 ({pe:.1f})" if pe < 12 else (f"合理 ({pe:.1f})" if pe <= 20 else f"昂貴 ({pe:.1f})")
                 pe_color = "🟢" if pe < 12 else ("🟡" if pe <= 20 else "🔴")
             
-            # 🧠 殖利率 0 判斷
             if yield_pct == 0:
                 yield_status = "無配息"
                 yield_color = "⚪"
@@ -107,7 +103,6 @@ with main_tab:
                 yield_status = f"高殖利率 ({yield_pct:.1f}%)" if yield_pct >= 4.5 else f"一般 ({yield_pct:.1f}%)"
                 yield_color = "🟢" if yield_pct >= 4.5 else "🟡"
             
-            # 🧠 【升級核心】營收 6MA > 12MA 交叉判定與 ETF 排除
             if rev_6ma == 0 and rev_12ma == 0:
                 rev_status = "⚪ 不適用 (ETF/無營收)"
             elif rev_6ma >= rev_12ma:
@@ -162,9 +157,51 @@ with main_tab:
                 st.markdown(f"**📈 營收趨勢判定 (6MA vs 12MA)：** {rev_status} ｜ **👤 主力籌碼：** {chips_status}")
 
 # ===================================================
-# ⚙ 設定面板 (v15.9 配合 6MA/12MA 配置)
+# ⚙ 設定面板 (新增雲端備份防爆區)
 # ===================================================
 with control_tab:
+    # 🌟 【核心新增】Streamlit Cloud 專用本機備份與還原中樞
+    st.markdown("### ☁️ Streamlit Cloud 專用：本機資料備份與還原中樞")
+    col_bak1, col_bak2 = st.columns(2)
+    
+    with col_bak1:
+        st.write("① 狀態保存：將目前所有股票、別名、6MA營收數據打包下載")
+        # 整合包資料打包
+        names_db_current = load_json(NAMES_FILE, {})
+        bundle_data = {
+            "watchlist": st.session_state.watchlist,
+            "names": names_db_current,
+            "backup_db": backup_db
+        }
+        json_string = json.dumps(bundle_data, ensure_ascii=False, indent=4)
+        st.download_button(
+            label="📥 點我下載【全系統核心備份檔】",
+            data=json_string,
+            file_name="my_stock_cloud_backup.json",
+            mime="application/json",
+            use_container_width=True
+        )
+        
+    with col_bak2:
+        st.write("② 滿血復活：當網頁因重啟清空時，上傳備份檔即可還原")
+        uploaded_backup = st.file_uploader("📤 拖曳或選擇您的備份檔 (.json) 進行還原", type=["json"])
+        if uploaded_backup is not None:
+            try:
+                uploaded_data = json.load(uploaded_backup)
+                if "watchlist" in uploaded_data and "backup_db" in uploaded_data:
+                    st.session_state.watchlist = uploaded_data["watchlist"]
+                    save_json(WATCHLIST_FILE, uploaded_data["watchlist"])
+                    save_json(NAMES_FILE, uploaded_data.get("names", {}))
+                    save_json(BACKUP_DATA_FILE, uploaded_data["backup_db"])
+                    st.success("✨ 全系統核心數據已完美還原！網頁即將自動重整...")
+                    time.sleep(1.0)
+                    st.rerun()
+                else: st.error("❌ 備份檔格式不符，請確認是否為系統下載的檔案。")
+            except Exception as e:
+                st.error(f"❌ 解析失敗: {str(e)}")
+                
+    st.write("---")
+
     col_left, col_right = st.columns([1, 1])
     with col_left:
         st.subheader("➕ 新增 / 編輯庫存股票")
@@ -189,13 +226,12 @@ with control_tab:
         if st.session_state.watchlist:
             tgt_b = st.selectbox("選擇要備援的股票", list(st.session_state.watchlist.keys()), key="select_target_stock_box")
             
-            # 從資料庫提取（相容舊版本 key，若無則預設為 0.0）
             cur_b = backup_db.get(tgt_b, {})
             v_pe = float(cur_b.get("pe", 0.0))
             v_yield = float(cur_b.get("yield", 0.0))
             v_chip = int(cur_b.get("net_buy_5d", 0))
-            v_6ma = float(cur_b.get("rev_6ma", cur_b.get("m_rev_1", 0.0))) # 升級相容
-            v_12ma = float(cur_b.get("rev_12ma", cur_b.get("m_rev_2", 0.0))) # 升級相容
+            v_6ma = float(cur_b.get("rev_6ma", cur_b.get("m_rev_1", 0.0)))
+            v_12ma = float(cur_b.get("rev_12ma", cur_b.get("m_rev_2", 0.0)))
             
             pe_in = st.number_input("手動本益比 (PE) *若為 ETF 請填 0*", value=v_pe, key=f"pe_in_{tgt_b}")
             y_in = st.number_input("手動殖利率 (%) *若為 ETF 請填 0*", value=v_yield, key=f"yield_in_{tgt_b}")
@@ -209,5 +245,5 @@ with control_tab:
             if st.button("💾 儲存並同步到卡片", use_container_width=True, key=f"save_backup_btn_{tgt_b}"):
                 backup_db[tgt_b] = {"net_buy_5d": chip_in, "rev_6ma": rev6ma_in, "rev_12ma": rev12ma_in, "pe": pe_in, "yield": y_in}
                 save_json(BACKUP_DATA_FILE, backup_db)
-                st.success(f"✨ {tgt_b} 專屬 6MA/12MA 數據同步成功！")
+                st.success(f"✨ {tgt_b} 專屬數據同步成功！")
                 time.sleep(0.5); st.rerun()
