@@ -13,14 +13,14 @@ WATCHLIST_FILE = "my_watchlist_v17.json"
 NAMES_FILE = "my_stock_names.json"
 BACKUP_DATA_FILE = "my_stock_backup_data_v17.json"
 
-st.set_page_config(page_title="個人化智慧看盤系統 v17.0", layout="wide")
+st.set_page_config(page_title="個人化智慧看盤系統 v17.2", layout="wide")
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 # 1. 密碼鎖
 if not st.session_state.authenticated:
-    st.markdown("<h3 style='text-align: center; margin-top: 50px;'>🔒 歡迎來到個人看盤戰情室 (v17.0)</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center; margin-top: 50px;'>🔒 歡迎來到個人看盤戰情室 (v17.2)</h3>", unsafe_allow_html=True)
     st.write("---")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -53,7 +53,7 @@ if "watchlist" not in st.session_state:
 backup_db = load_json(BACKUP_DATA_FILE, {}) 
 names_db = load_json(NAMES_FILE, {})
 
-# 3. yfinance 核心價格引擎 (含防阻擋機制)
+# 3. yfinance 核心價格引擎 (含智慧防重複乘以100機制)
 @st.cache_data(ttl=300)
 def fetch_clean_stock_data(ticker_symbol):
     try:
@@ -66,9 +66,14 @@ def fetch_clean_stock_data(ticker_symbol):
             
         info = stock.info
         pe = info.get("trailingPE") or info.get("forwardPE")
+        
+        # 🛡️ 智慧殖利率防錯判定 (當手動沒填、走 API 時的雙重保險)
         yield_pct = info.get("dividendYield")
-        if yield_pct: 
-            yield_pct = round(yield_pct * 100, 2)
+        if yield_pct is not None: 
+            if yield_pct < 1:  # 如果是小數格式 (例如 0.0403 -> 4.03%)
+                yield_pct = round(yield_pct * 100, 2)
+            else:              # 如果 yfinance 已經自動去小數化 (例如 4.03 -> 4.03%)
+                yield_pct = round(yield_pct, 2)
         
         return hist, {"pe": pe, "yield": yield_pct}, "OK"
     except Exception as e: 
@@ -80,8 +85,8 @@ def get_display_name(ticker):
 # ===================================================
 # 📊 介面啟動與主選單
 # ===================================================
-st.title("📊 個人化智慧看盤系統 v17.0")
-st.caption("🪵 6MA / 12MA 戰略版 │ ☁️ 雲端備援機制 │ 🛠️ 語法完全修復穩定版")
+st.title("📊 個人化智慧看盤系統 v17.2")
+st.caption("🪵 6MA / 12MA 戰略版 │ 👑 手動數據主權優先版 │ 🛡️ 殖利率防禦修正")
 
 if st.button("🔄 強制清除股價快取 (若股價卡住請點此)"):
     st.cache_data.clear()
@@ -96,7 +101,7 @@ with main_tab:
     if not st.session_state.watchlist:
         st.info("💡 目前系統內沒有股票。請切換到「設定後台」新增股票或上傳備份檔！")
     else:
-        ma_strategy = st.radio("買點策略", ["波段操作 (20MA)", "長線大底 (60MA)"], horizontal=True, key="ma_strat_170")
+        ma_strategy = st.radio("買點策略", ["波段操作 (20MA)", "長線大底 (60MA)"], horizontal=True, key="ma_strat_172")
         st.write("---")
         
         for ticker_symbol, item in st.session_state.watchlist.items():
@@ -109,9 +114,10 @@ with main_tab:
                 st.warning(f"⚠️ 暫時無法取得 【{stock_name} ({ticker_symbol})】 的即時股價資料。已切換為純備援顯示。原因：{status}")
                 continue
 
-            # 綜合數據 (優先用即時，若無則用手動備援)
-            pe = val_data.get("pe") if val_data.get("pe") is not None else b_item.get("pe", 0.0)
-            yield_pct = val_data.get("yield") if val_data.get("yield") is not None else b_item.get("yield", 0.0)
+            # 綜合數據 (👑 👑 v17.2 重大升級：手動只要大於 0 就絕對優先採用，戳破 API 錯誤)
+            pe = b_item.get("pe", 0.0) if b_item.get("pe", 0.0) > 0 else (val_data.get("pe") if val_data.get("pe") is not None else 0.0)
+            yield_pct = b_item.get("yield", 0.0) if b_item.get("yield", 0.0) > 0 else (val_data.get("yield") if val_data.get("yield") is not None else 0.0)
+            
             net_buy_5d = b_item.get("net_buy_5d", 0)
             rev_6ma = b_item.get("rev_6ma", 0.0) 
             rev_12ma = b_item.get("rev_12ma", 0.0) 
@@ -143,7 +149,7 @@ with main_tab:
             else: 
                 chips_status = f"🟡 籌碼震盪 ({net_buy_5d}張)"
 
-            # ⚙️ 【括號完美修復處】
+            # 移動停損即時監控數據
             price = hist['Close'].iloc[-1]
             historical_max = float(hist['Close'].max())
             stop_base = max(item["cost"], historical_max)
@@ -186,7 +192,7 @@ with main_tab:
 
 
 # ===================================================
-# ⚙️ 設定後台分頁 (包含完整新增、刪除、手動備援)
+# ⚙️ 設定後台分頁
 # ===================================================
 with control_tab:
     st.markdown("### ☁️ 系統資料備份與還原中樞")
@@ -227,11 +233,10 @@ with control_tab:
                 
     st.write("---")
 
-    # 左右排版：左邊管新增/刪除，右邊管進階備援數據
+    # 左右排版
     col_left, col_right = st.columns([1, 1])
     
     with col_left:
-        # 🟢 新增股票區塊
         st.subheader("➕ 新增 / 編輯庫存股票")
         new_stock = st.text_input("股票代碼 (例: 0050.TW)", key="add_code").upper().strip()
         custom_name = st.text_input("股票中文別名 (例: 元大台灣50)", key="add_name")
@@ -256,12 +261,11 @@ with control_tab:
 
         st.write("---")
         
-        # 🔴 刪除股票區塊
         st.subheader("🗑️ 刪除庫存股票")
         if st.session_state.watchlist:
             stock_to_delete = st.selectbox("請選擇要從清單移除的股票", ["-- 請選擇 --"] + list(st.session_state.watchlist.keys()))
             if st.button("⚠️ 確認刪除", type="primary", use_container_width=True):
-                if stock_to_delete != "-- 請選擇 --" and stock_to_delete in st.session_state.watchlist:
+                if stock_to_delete != "-- 請选择 --" and stock_to_delete in st.session_state.watchlist:
                     del st.session_state.watchlist[stock_to_delete]
                     save_json(WATCHLIST_FILE, st.session_state.watchlist)
                     st.success(f"已成功刪除 {stock_to_delete}！")
@@ -271,7 +275,6 @@ with control_tab:
             st.info("目前沒有可刪除的股票。")
 
     with col_right:
-        # ✍️ 手動備援區塊
         st.subheader("✍ 🛠️ 進階數據【手動備援區】")
         if st.session_state.watchlist:
             tgt_b = st.selectbox("選擇要備援的股票", list(st.session_state.watchlist.keys()), key="backup_tgt")
