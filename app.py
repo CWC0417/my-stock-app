@@ -10,8 +10,7 @@ from datetime import datetime, timedelta
 # 🔑 系統密碼與 API 設定
 # ===================================================
 MY_PRIVATE_PASSWORD = "36333948" 
-FINMIND_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoiMzQzNTY4MTIiLCJlbWFpbCI6IngxMjN5ejg3QGdtYWlsLmNvbSIsInRva2VuX3ZlcnNpb24iOjB9.X3YH2qYzM84f3iJeD0vendPFoUP7nvrONOyXvkfDdWQ
-"  # 👈 ⚠️ 把你拿到的 Token 貼在這兩個引號中間
+FINMIND_TOKEN ="eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoiMzQzNTY4MTIiLCJlbWFpbCI6IngxMjN5ejg3QGdtYWlsLmNvbSIsInRva2VuX3ZlcnNpb24iOjB9.X3YH2qYzM84f3iJeD0vendPFoUP7nvrONOyXvkfDdWQ"  # 👈 ⚠️ 把你拿到的 Token 貼在這兩個引號中間
 
 WATCHLIST_FILE = "my_watchlist_v18.json"
 NAMES_FILE = "my_stock_names.json"
