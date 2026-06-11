@@ -1,26 +1,30 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
+import requests
 import json
 import os
 import time
+from datetime import datetime, timedelta
 
 # ===================================================
-# 🔑 系統密碼與檔案設定
+# 🔑 系統密碼與 API 設定
 # ===================================================
 MY_PRIVATE_PASSWORD = "36333948" 
-WATCHLIST_FILE = "my_watchlist_v17.json"
-NAMES_FILE = "my_stock_names.json"
-BACKUP_DATA_FILE = "my_stock_backup_data_v17.json"
+FINMIND_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoiMzQzNTY4MTIiLCJlbWFpbCI6IngxMjN5ejg3QGdtYWlsLmNvbSIsInRva2VuX3ZlcnNpb24iOjB9.X3YH2qYzM84f3iJeD0vendPFoUP7nvrONOyXvkfDdWQ
+"  # 👈 ⚠️ 把你拿到的 Token 貼在這兩個引號中間
 
-st.set_page_config(page_title="個人化智慧看盤系統 v17.2", layout="wide")
+WATCHLIST_FILE = "my_watchlist_v18.json"
+NAMES_FILE = "my_stock_names.json"
+BACKUP_DATA_FILE = "my_stock_backup_data_v18.json"
+
+st.set_page_config(page_title="個人化智慧看盤系統 v18.0", layout="wide")
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 # 1. 密碼鎖
 if not st.session_state.authenticated:
-    st.markdown("<h3 style='text-align: center; margin-top: 50px;'>🔒 歡迎來到個人看盤戰情室 (v17.2)</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center; margin-top: 50px;'>🔒 歡迎來到個人看盤戰情室 (v18.0)</h3>", unsafe_allow_html=True)
     st.write("---")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -53,31 +57,59 @@ if "watchlist" not in st.session_state:
 backup_db = load_json(BACKUP_DATA_FILE, {}) 
 names_db = load_json(NAMES_FILE, {})
 
-# 3. yfinance 核心價格引擎 (含智慧防重複乘以100機制)
-@st.cache_data(ttl=300)
-def fetch_clean_stock_data(ticker_symbol):
+# 3. 🚀 FinMind 核心引擎 (v18.0 重大升級，取代易斷線的 yfinance)
+@st.cache_data(ttl=3600)  # 快取 1 小時，大幅節省 API 額度
+def fetch_clean_stock_data(ticker_symbol, token):
+    # 清理代碼 (FinMind 只需要數字，不需要 .TW)
+    clean_id = ticker_symbol.replace(".TW", "").replace(".TWO", "")
+    
+    # 計算時間範圍：股價抓近 200 天(為了算 60MA)，本益比抓近 15 天(取最新)
+    price_start_date = (datetime.now() - timedelta(days=200)).strftime("%Y-%m-%d")
+    val_start_date = (datetime.now() - timedelta(days=15)).strftime("%Y-%m-%d")
+    
+    url = "https://api.finmindtrade.com/api/v4/data"
+    
     try:
-        time.sleep(0.3)  # 🛡️ 增加延遲，避免連續請求被 Yahoo 阻擋
-        stock = yf.Ticker(ticker_symbol)
-        hist = stock.history(period="6mo") 
+        # --- A. 抓取台股日線圖 (TaiwanStockPrice) ---
+        res_price = requests.get(url, params={
+            "dataset": "TaiwanStockPrice",
+            "data_id": clean_id,
+            "start_date": price_start_date,
+            "token": token
+        }, timeout=10)
         
-        if hist.empty or len(hist) < 30: 
-            return None, {}, "歷史資料不足或遭阻擋"
+        price_data = res_price.json()
+        if price_data.get("msg") != "success" or not price_data.get("data"):
+            return None, {}, "無法從 FinMind 取得股價，請確認代碼或 API 額度。"
             
-        info = stock.info
-        pe = info.get("trailingPE") or info.get("forwardPE")
+        df_price = pd.DataFrame(price_data["data"])
+        # 轉換欄位名稱以相容原本的卡片邏輯
+        df_price.rename(columns={'close': 'Close', 'date': 'Date', 'max': 'High', 'min': 'Low', 'open': 'Open'}, inplace=True)
+        df_price['Date'] = pd.to_datetime(df_price['Date'])
+        df_price.set_index('Date', inplace=True)
         
-        # 🛡️ 智慧殖利率防錯判定 (當手動沒填、走 API 時的雙重保險)
-        yield_pct = info.get("dividendYield")
-        if yield_pct is not None: 
-            if yield_pct < 1:  # 如果是小數格式 (例如 0.0403 -> 4.03%)
-                yield_pct = round(yield_pct * 100, 2)
-            else:              # 如果 yfinance 已經自動去小數化 (例如 4.03 -> 4.03%)
-                yield_pct = round(yield_pct, 2)
+        # --- B. 抓取本益比與殖利率 (TaiwanStockPER) ---
+        res_val = requests.get(url, params={
+            "dataset": "TaiwanStockPER",
+            "data_id": clean_id,
+            "start_date": val_start_date,
+            "token": token
+        }, timeout=10)
         
-        return hist, {"pe": pe, "yield": yield_pct}, "OK"
+        val_data_json = res_val.json()
+        pe, yield_pct = None, None
+        
+        if val_data_json.get("msg") == "success" and val_data_json.get("data"):
+            df_val = pd.DataFrame(val_data_json["data"])
+            if not df_val.empty:
+                latest_val = df_val.iloc[-1]
+                pe = latest_val.get("PE_ratio")
+                yield_pct = latest_val.get("dividend_yield")
+        
+        return df_price, {"pe": pe, "yield": yield_pct}, "OK"
+        
     except Exception as e: 
-        return None, {}, str(e)
+        return None, {}, f"連線異常: {str(e)}"
 
 def get_display_name(ticker):
     return names_db.get(ticker, ticker)
@@ -85,10 +117,10 @@ def get_display_name(ticker):
 # ===================================================
 # 📊 介面啟動與主選單
 # ===================================================
-st.title("📊 個人化智慧看盤系統 v17.2")
-st.caption("🪵 6MA / 12MA 戰略版 │ 👑 手動數據主權優先版 │ 🛡️ 殖利率防禦修正")
+st.title("📊 個人化智慧看盤系統 v18.0")
+st.caption("🚀 全面導入 FinMind API │ 🛡️ 告別 Yahoo 阻擋斷線 │ 👑 穩定高速版")
 
-if st.button("🔄 強制清除股價快取 (若股價卡住請點此)"):
+if st.button("🔄 強制清除股價快取 (抓取最新盤後資料)"):
     st.cache_data.clear()
     st.rerun()
 
@@ -100,13 +132,17 @@ main_tab, control_tab = st.tabs(["核心戰情", "設定後台"])
 with main_tab:
     if not st.session_state.watchlist:
         st.info("💡 目前系統內沒有股票。請切換到「設定後台」新增股票或上傳備份檔！")
+    elif FINMIND_TOKEN == "請在這裡貼上你的_FinMind_Token":
+        st.error("🚨 系統偵測到你尚未設定 FinMind Token！請先至程式碼碼第 11 行貼上你的 Token。")
     else:
-        ma_strategy = st.radio("買點策略", ["波段操作 (20MA)", "長線大底 (60MA)"], horizontal=True, key="ma_strat_172")
+        ma_strategy = st.radio("買點策略", ["波段操作 (20MA)", "長線大底 (60MA)"], horizontal=True, key="ma_strat_180")
         st.write("---")
         
         for ticker_symbol, item in st.session_state.watchlist.items():
             stock_name = get_display_name(ticker_symbol)
-            hist, val_data, status = fetch_clean_stock_data(ticker_symbol)
+            
+            # 🚀 呼叫全新的 FinMind 引擎
+            hist, val_data, status = fetch_clean_stock_data(ticker_symbol, FINMIND_TOKEN)
             
             b_item = backup_db.get(ticker_symbol, {"net_buy_5d": 0, "rev_6ma": 0.0, "rev_12ma": 0.0, "pe": 0.0, "yield": 0.0})
             
@@ -114,9 +150,9 @@ with main_tab:
                 st.warning(f"⚠️ 暫時無法取得 【{stock_name} ({ticker_symbol})】 的即時股價資料。已切換為純備援顯示。原因：{status}")
                 continue
 
-            # 綜合數據 (👑 👑 v17.2 重大升級：手動只要大於 0 就絕對優先採用，戳破 API 錯誤)
-            pe = b_item.get("pe", 0.0) if b_item.get("pe", 0.0) > 0 else (val_data.get("pe") if val_data.get("pe") is not None else 0.0)
-            yield_pct = b_item.get("yield", 0.0) if b_item.get("yield", 0.0) > 0 else (val_data.get("yield") if val_data.get("yield") is not None else 0.0)
+            # 綜合數據 (手動大於 0 絕對優先採用)
+            pe = b_item.get("pe", 0.0) if b_item.get("pe", 0.0) > 0 else (val_data.get("pe") if pd.notna(val_data.get("pe")) else 0.0)
+            yield_pct = b_item.get("yield", 0.0) if b_item.get("yield", 0.0) > 0 else (val_data.get("yield") if pd.notna(val_data.get("yield")) else 0.0)
             
             net_buy_5d = b_item.get("net_buy_5d", 0)
             rev_6ma = b_item.get("rev_6ma", 0.0) 
@@ -124,7 +160,7 @@ with main_tab:
 
             # 狀態燈號計算
             if pe == 0:
-                pe_status, pe_color = "不適用 (ETF)", "⚪"
+                pe_status, pe_color = "不適用 (ETF/未填寫)", "⚪"
             else:
                 pe_status = f"便宜 ({pe:.1f})" if pe < 12 else (f"合理 ({pe:.1f})" if pe <= 20 else f"昂貴 ({pe:.1f})")
                 pe_color = "🟢" if pe < 12 else ("🟡" if pe <= 20 else "🔴")
@@ -132,7 +168,7 @@ with main_tab:
             if yield_pct == 0:
                 yield_status, yield_color = "無配息", "⚪"
             else:
-                yield_status = f"高殖利率 ({yield_pct:.1f}%)" if yield_pct >= 4.5 else f"一般 ({yield_pct:.1f}%)"
+                yield_status = f"高殖利率 ({yield_pct:.2f}%)" if yield_pct >= 4.5 else f"一般 ({yield_pct:.2f}%)"
                 yield_color = "🟢" if yield_pct >= 4.5 else "🟡"
             
             if rev_6ma == 0 and rev_12ma == 0:
@@ -150,7 +186,7 @@ with main_tab:
                 chips_status = f"🟡 籌碼震盪 ({net_buy_5d}張)"
 
             # 移動停損即時監控數據
-            price = hist['Close'].iloc[-1]
+            price = float(hist['Close'].iloc[-1])
             historical_max = float(hist['Close'].max())
             stop_base = max(item["cost"], historical_max)
             trailing_stop_line = stop_base * 0.90 
@@ -162,11 +198,12 @@ with main_tab:
                 drop_broken = ((trailing_stop_line - price) / trailing_stop_line) * 100
                 stop_light, hold_action, hold_color = f"🔴 破線 (超限 {drop_broken:.1f}%)", "🚨 觸發移動停損！請執行賣出紀律！", "🔴"
 
+            # 計算均線
             hist['MA20'] = hist['Close'].rolling(window=20).mean()
             hist['MA60'] = hist['Close'].rolling(window=60).mean()
             target_ma = hist['MA20'].iloc[-1] if "20MA" in ma_strategy else hist['MA60'].iloc[-1]
             ma_label = "20MA" if "20MA" in ma_strategy else "60MA"
-            buy_range_str = f"{target_ma:.2f} ~ {target_ma * 1.05:.2f}" if pd.notna(target_ma) else "計算中"
+            buy_range_str = f"{target_ma:.2f} ~ {target_ma * 1.05:.2f}" if pd.notna(target_ma) else "資料天數不足"
             
             if item["type"] == "已持股":
                 pnl = (price - item["cost"]) * item["qty"]
@@ -180,7 +217,7 @@ with main_tab:
                 if item["type"] == "已持股":
                     st.markdown("### 🛑 移動停損即時監控數據")
                     col1, col2, col3 = st.columns(3)
-                    col1.metric("⛰ *6個月最高價*", f"{historical_max:.2f} 元")
+                    col1.metric("⛰ *半年最高價*", f"{historical_max:.2f} 元")
                     col2.metric("🎯 *停損賣出線*", f"{trailing_stop_line:.2f} 元")
                     col3.metric("🚨 *死線倒數*", stop_light)
                     st.markdown(f"**💰 目前持股累積損益：** **{pnl_str}**")
@@ -209,7 +246,7 @@ with control_tab:
         st.download_button(
             label="📥 點我下載【全系統核心備份檔】",
             data=json_string,
-            file_name="my_stock_cloud_backup_v17.json",
+            file_name="my_stock_cloud_backup_v18.json",
             mime="application/json",
             use_container_width=True
         )
@@ -233,7 +270,6 @@ with control_tab:
                 
     st.write("---")
 
-    # 左右排版
     col_left, col_right = st.columns([1, 1])
     
     with col_left:
