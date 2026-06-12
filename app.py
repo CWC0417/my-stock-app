@@ -39,7 +39,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 # 讀取雲端資料並轉換為系統記憶體結構
 try:
     # ttl=0 代表不使用快取，每次重整都去 Google Sheets 抓最新的股票清單
-    df_cloud = conn.read(worksheet="Sheet1", ttl=0)
+    df_cloud = conn.read(worksheet="工作表1", ttl=0)
     
     # 過濾可能不小心讀到的空行或說明列
     df_cloud = df_cloud[df_cloud['stock_id'].notna() & (df_cloud['stock_id'].str.strip() != "")]
