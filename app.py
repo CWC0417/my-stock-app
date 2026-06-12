@@ -15,6 +15,9 @@ FINMIND_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoiMzQzNTY4MT
 
 st.set_page_config(page_title="個人化智慧看盤系統 v18.0 雲端版", layout="wide")
 
+# 🚀 功能三：網頁最頂端設定錨點（一鍵回到頂部必備）
+st.markdown("<div id='top'></div>", unsafe_allow_html=True) 
+
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -36,22 +39,12 @@ if not st.session_state.authenticated:
 # 2. 🔗 初始化 Google Sheets 連線
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# 讀取雲端資料並轉換為系統記憶體結構
 try:
-    # ttl=0 代表不使用快取，每次重整都去 Google Sheets 抓最新的股票清單
     df_cloud = conn.read(worksheet="工作表1", ttl=0)
-
-    # 1. 先把這一欄轉成字串並去除空白
     df_cloud['stock_id'] = df_cloud['stock_id'].astype(str).str.strip()
-
-    # 2. 🔥 核心修正：消滅 .0 殘渣！
-    # 這行能把 "2330.0" 精準變成 "2330"，而原本就是 "2330" 的人不受影響
     df_cloud['stock_id'] = df_cloud['stock_id'].str.split('.').str[0]
-
-    # 3. 過濾掉無效的行（包含空值、轉出來的 "nan" 文字、以及說明列）
     df_cloud = df_cloud[df_cloud['stock_id'].notna() & (df_cloud['stock_id'] != "") & (df_cloud['stock_id'] != "nan")]
     df_cloud = df_cloud[~df_cloud['stock_id'].str.contains("必填", na=False)]
-
 except Exception as e:
     st.error(f"🚨 讀取雲端資料表失敗，請檢查權限或 Secrets 設定。錯誤原因: {str(e)}")
     st.stop()
@@ -63,10 +56,14 @@ backup_db = {}
 
 for _, row in df_cloud.iterrows():
     ticker = str(row['stock_id']).strip().upper()
+    # 🎯 讀取分類欄位（如果雲端沒有這欄，預設給「未分類」）
+    cat = str(row['分類']).strip() if '分類' in df_cloud.columns and pd.notna(row['分類']) else "未分類"
+    
     watchlist[ticker] = {
         "type": str(row['type']).strip() if pd.notna(row['type']) else "觀察中 (尚未買進)",
         "cost": float(row['cost']) if pd.notna(row['cost']) else 0.0,
-        "qty": int(row['qty']) if pd.notna(row['qty']) else 0
+        "qty": int(row['qty']) if pd.notna(row['qty']) else 0,
+        "category": cat  # 加入分類資料
     }
     names_db[ticker] = str(row['stock_name']).strip() if pd.notna(row['stock_name']) else ticker
     backup_db[ticker] = {
@@ -77,7 +74,6 @@ for _, row in df_cloud.iterrows():
         "rev_12ma": float(row['rev_12ma']) if pd.notna(row['rev_12ma']) else 0.0
     }
 
-# 雲端同步寫入工具
 def save_to_google_sheets(w_dict, n_dict, b_dict):
     rows = []
     all_tickers = sorted(list(w_dict.keys()))
@@ -88,6 +84,7 @@ def save_to_google_sheets(w_dict, n_dict, b_dict):
         rows.append({
             "stock_id": ticker,
             "stock_name": n,
+            "分類": w.get("category", "未分類"), # 同步寫入分類
             "type": w["type"],
             "cost": w["cost"],
             "qty": w["qty"],
@@ -105,8 +102,7 @@ def save_to_google_sheets(w_dict, n_dict, b_dict):
         st.error(f"❌ 雲端資料同步更新失敗: {str(e)}")
         return False
 
-# 3. 🚀 FinMind 核心引擎
-@st.cache_data(ttl=3600)  # 股價數據快取 1 小時
+@st.cache_data(ttl=3600)
 def fetch_clean_stock_data(ticker_symbol, token):
     clean_id = ticker_symbol.replace(".TW", "").replace(".TWO", "")
     price_start_date = (datetime.now() - timedelta(days=200)).strftime("%Y-%m-%d")
@@ -114,7 +110,6 @@ def fetch_clean_stock_data(ticker_symbol, token):
     url = "https://api.finmindtrade.com/api/v4/data"
     
     try:
-        # A. 抓取台股日線圖
         res_price = requests.get(url, params={
             "dataset": "TaiwanStockPrice", "data_id": clean_id,
             "start_date": price_start_date, "token": token
@@ -128,7 +123,6 @@ def fetch_clean_stock_data(ticker_symbol, token):
         df_price['Date'] = pd.to_datetime(df_price['Date'])
         df_price.set_index('Date', inplace=True)
         
-        # B. 抓取本益比與殖利率
         res_val = requests.get(url, params={
             "dataset": "TaiwanStockPER", "data_id": clean_id,
             "start_date": val_start_date, "token": token
@@ -148,6 +142,24 @@ def fetch_clean_stock_data(ticker_symbol, token):
 
 def get_display_name(ticker):
     return names_db.get(ticker, ticker)
+
+# ===================================================
+# 🗂️ 側邊欄：全局控制與分類篩選
+# ===================================================
+st.sidebar.header("🛠️ 戰情控制面板")
+
+# 🚀 功能一：一鍵展開開關
+expand_all = st.sidebar.checkbox("🔓 一鍵展開所有股票資訊", value=False)
+st.sidebar.divider()
+
+# 🚀 功能二：股票分類篩選
+all_cats = list(set([data["category"] for data in watchlist.values()])) if watchlist else []
+if "未分類" in all_cats and len(all_cats) == 1:
+    st.sidebar.info("💡 提示：您可以在「設定後台」幫股票加上分類喔！")
+    selected_cat = "全部"
+else:
+    selected_cat = st.sidebar.selectbox("📂 股票分類篩選", ["全部"] + sorted([c for c in all_cats if c != "nan" and c != ""]))
+
 
 # ===================================================
 # 📊 介面啟動與主選單
@@ -172,6 +184,10 @@ with main_tab:
         st.write("---")
         
         for ticker_symbol, item in watchlist.items():
+            # 🎯 執行分類篩選過濾
+            if selected_cat != "全部" and item["category"] != selected_cat:
+                continue
+
             stock_name = get_display_name(ticker_symbol)
             hist, val_data, status = fetch_clean_stock_data(ticker_symbol, FINMIND_TOKEN)
             b_item = backup_db.get(ticker_symbol, {"net_buy_5d": 0, "rev_6ma": 0.0, "rev_12ma": 0.0, "pe": 0.0, "yield": 0.0})
@@ -237,7 +253,8 @@ with main_tab:
             else: 
                 pnl_str, hold_action, stop_light, hold_color = "—", "觀察中", "—", "⚪"
                 
-            with st.expander(f"📈 {stock_name} ({ticker_symbol}) ｜ 現價: 🌐 {price:.2f} ｜ 🛑 {hold_color} {hold_action}"):
+            # 🎯 expanded=expand_all 讓側邊欄開關可以控制這裡
+            with st.expander(f"📈 {stock_name} ({ticker_symbol}) ｜ 🏷️ {item['category']} ｜ 現價: 🌐 {price:.2f} ｜ 🛑 {hold_color} {hold_action}", expanded=expand_all):
                 if item["type"] == "已持股":
                     st.markdown("### 🛑 移動停損即時監控數據")
                     col1, col2, col3 = st.columns(3)
@@ -265,6 +282,7 @@ with control_tab:
         st.subheader("➕ 新增 / 編輯庫存股票")
         new_stock = st.text_input("股票代碼 (例: 2330.TW)", key="add_code").upper().strip()
         custom_name = st.text_input("股票中文別名 (例: 台積電)", key="add_name")
+        stock_cat = st.text_input("分類 (例: 半導體、ETF)，預設為「未分類」", value="未分類", key="add_cat") # 🎯 新增的分類輸入框
         stock_type = st.selectbox("類別", ["觀察中 (尚未買進)", "已持股"], key="add_type")
         
         cost, qty = 0.0, 0
@@ -274,7 +292,8 @@ with control_tab:
             
         if st.button("💾 確認儲存並同步至雲端", use_container_width=True):
             if new_stock:
-                watchlist[new_stock] = {"type": stock_type, "cost": cost, "qty": qty}
+                # 儲存時把 category 也放進去
+                watchlist[new_stock] = {"type": stock_type, "cost": cost, "qty": qty, "category": stock_cat}
                 if custom_name: 
                     names_db[new_stock] = custom_name
                 
@@ -332,3 +351,30 @@ with control_tab:
                     st.rerun()
         else:
             st.info("請先在左側新增股票。")
+
+# ===================================================
+# 🚀 功能四：懸浮按鈕 - 一鍵回到最上面 (放在最底部)
+# ===================================================
+st.markdown("""
+    <style>
+    .scroll-to-top {
+        position: fixed;
+        bottom: 30px;
+        right: 30px;
+        background-color: #ff4b4b; /* Streamlit 紅色 */
+        color: white !important;
+        padding: 12px 18px;
+        border-radius: 50px;
+        text-decoration: none;
+        font-weight: bold;
+        box-shadow: 2px 2px 10px rgba(0,0,0,0.2);
+        z-index: 9999;
+        transition: all 0.3s ease;
+    }
+    .scroll-to-top:hover {
+        background-color: #d63636;
+        transform: scale(1.05);
+    }
+    </style>
+    <a href="#top" class="scroll-to-top">⬆️ 回到頂部</a>
+""", unsafe_allow_html=True)
