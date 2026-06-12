@@ -41,10 +41,11 @@ try:
     # ttl=0 代表不使用快取，每次重整都去 Google Sheets 抓最新的股票清單
     df_cloud = conn.read(worksheet="工作表1", ttl=0)
 
-    # 🔥 關鍵修正：前面補上 4 個空格（縮排），且變數名稱改成 df_cloud
-    df_cloud = df_cloud.astype(str)
+    # 🎯 關鍵修正：不要用 df_cloud = df_cloud.astype(str)
+    # 我們「只」把需要過濾的 'stock_id' 轉成字串，放過其他數字欄位（如 qty）！
+    df_cloud['stock_id'] = df_cloud['stock_id'].astype(str)
 
-    # 過濾可能不小心讀到的空行或說明列（此時 df_cloud 已全為字串，以下兩行可完美執行）
+    # 過濾可能不小心讀到的空行或說明列
     df_cloud = df_cloud[df_cloud['stock_id'].notna() & (df_cloud['stock_id'].str.strip() != "")]
     df_cloud = df_cloud[~df_cloud['stock_id'].str.contains("必填", na=False)]
 
