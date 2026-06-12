@@ -91,7 +91,7 @@ def save_to_google_sheets(w_dict, n_dict, b_dict):
         })
     new_df = pd.DataFrame(rows)
     try:
-        conn.update(worksheet="Sheet1", data=new_df)
+        conn.update(worksheet="工作表1", data=new_df)
         return True
     except Exception as e:
         st.error(f"❌ 雲端資料同步更新失敗: {str(e)}")
