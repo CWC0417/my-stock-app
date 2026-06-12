@@ -41,12 +41,15 @@ try:
     # ttl=0 代表不使用快取，每次重整都去 Google Sheets 抓最新的股票清單
     df_cloud = conn.read(worksheet="工作表1", ttl=0)
 
-    # 🎯 關鍵修正：不要用 df_cloud = df_cloud.astype(str)
-    # 我們「只」把需要過濾的 'stock_id' 轉成字串，放過其他數字欄位（如 qty）！
-    df_cloud['stock_id'] = df_cloud['stock_id'].astype(str)
+    # 1. 先把這一欄轉成字串並去除空白
+    df_cloud['stock_id'] = df_cloud['stock_id'].astype(str).str.strip()
 
-    # 過濾可能不小心讀到的空行或說明列
-    df_cloud = df_cloud[df_cloud['stock_id'].notna() & (df_cloud['stock_id'].str.strip() != "")]
+    # 2. 🔥 核心修正：消滅 .0 殘渣！
+    # 這行能把 "2330.0" 精準變成 "2330"，而原本就是 "2330" 的人不受影響
+    df_cloud['stock_id'] = df_cloud['stock_id'].str.split('.').str[0]
+
+    # 3. 過濾掉無效的行（包含空值、轉出來的 "nan" 文字、以及說明列）
+    df_cloud = df_cloud[df_cloud['stock_id'].notna() & (df_cloud['stock_id'] != "") & (df_cloud['stock_id'] != "nan")]
     df_cloud = df_cloud[~df_cloud['stock_id'].str.contains("必填", na=False)]
 
 except Exception as e:
