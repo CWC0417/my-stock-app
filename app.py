@@ -41,13 +41,13 @@ try:
     # ttl=0 代表不使用快取，每次重整都去 Google Sheets 抓最新的股票清單
     df_cloud = conn.read(worksheet="工作表1", ttl=0)
 
-# 3. 🔥 關鍵防呆：在讀取完後，立刻強制把整張表的所有格子都變成「字串（文字）」
-# 這樣一來，不管雲端填的是純數字還是有空格，後面的 .str 語法絕對不會再報錯！
-    f_cloud = df_cloud.astype(str)
+    # 🔥 關鍵修正：前面補上 4 個空格（縮排），且變數名稱改成 df_cloud
+    df_cloud = df_cloud.astype(str)
 
-    # 過濾可能不小心讀到的空行或說明列
+    # 過濾可能不小心讀到的空行或說明列（此時 df_cloud 已全為字串，以下兩行可完美執行）
     df_cloud = df_cloud[df_cloud['stock_id'].notna() & (df_cloud['stock_id'].str.strip() != "")]
     df_cloud = df_cloud[~df_cloud['stock_id'].str.contains("必填", na=False)]
+
 except Exception as e:
     st.error(f"🚨 讀取雲端資料表失敗，請檢查權限或 Secrets 設定。錯誤原因: {str(e)}")
     st.stop()
