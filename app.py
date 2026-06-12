@@ -5,13 +5,16 @@ import json
 import os
 import time
 from datetime import datetime, timedelta
-from streamlit_gsheets import GSheetsConnection
 
 # ===================================================
 # 🔑 系統密碼與 API 設定
 # ===================================================
 MY_PRIVATE_PASSWORD = "36333948" 
 FINMIND_TOKEN ="eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoiMzQzNTY4MTIiLCJlbWFpbCI6IngxMjN5ejg3QGdtYWlsLmNvbSIsInRva2VuX3ZlcnNpb24iOjB9.X3YH2qYzM84f3iJeD0vendPFoUP7nvrONOyXvkfDdWQ"
+
+WATCHLIST_FILE = "my_watchlist_v18.json"
+NAMES_FILE = "my_stock_names.json"
+BACKUP_DATA_FILE = "my_stock_backup_data_v18.json"
 
 st.set_page_config(page_title="個人化智慧看盤系統 v18.0", layout="wide")
 
@@ -33,62 +36,31 @@ if not st.session_state.authenticated:
                 st.error("❌ 密碼錯誤")
     st.stop()
 
-# ===================================================
-# ☁️ 2. Google Sheets 雲端資料讀寫核心工具
-# ===================================================
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-def load_sheet_to_dict(worksheet_name, default_data):
-    """從 Google Sheets 讀取資料並完美轉換為系統原本使用的字典格式"""
-    try:
-        df = conn.read(worksheet=worksheet_name, ttl=0)
-        if df is None or df.empty:
+# 2. 資料讀寫工具
+def load_json(filepath, default_data):
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, "r", encoding='utf-8') as f: 
+                return json.load(f)
+        except: 
             return default_data
-        
-        # 確保第一欄轉換為索引
-        if 'ticker' in df.columns:
-            df = df.set_index('ticker')
-        else:
-            df = df.set_index(df.columns[0])
-            
-        res_dict = df.to_dict(orient='index')
-        
-        # 針對名稱庫(names_db)進行扁平化處理，維持相容性
-        if worksheet_name == "names_db":
-            return {k: v.get('name', k) for k, v in res_dict.items()}
-            
-        return res_dict
-    except Exception:
-        return default_data
+    return default_data
 
-def save_dict_to_sheet(worksheet_name, data_dict):
-    """將原本系統的字典格式自動重組為 DataFrame 並寫入 Google Sheets"""
-    try:
-        if worksheet_name == "names_db":
-            df = pd.DataFrame(list(data_dict.items()), columns=['ticker', 'name'])
-        else:
-            df = pd.DataFrame.from_dict(data_dict, orient='index')
-            df.index.name = 'ticker'
-            df = df.reset_index()
-            
-        conn.update(worksheet=worksheet_name, data=df)
-    except Exception as e:
-        st.error(f"⚠️ 雲端備份同步失敗: {str(e)}")
+def save_json(filepath, data):
+    with open(filepath, "w", encoding='utf-8') as f: 
+        json.dump(data, f, ensure_ascii=False, indent=4)
 
-# 初始化與同步雲端變數
 if "watchlist" not in st.session_state:
-    st.session_state.watchlist = load_sheet_to_dict("watchlist", {})
+    st.session_state.watchlist = load_json(WATCHLIST_FILE, {})
 
-backup_db = load_sheet_to_dict("backup_db", {}) 
-names_db = load_sheet_to_dict("names_db", {})
+backup_db = load_json(BACKUP_DATA_FILE, {}) 
+names_db = load_json(NAMES_FILE, {})
 
-# ===================================================
-# 🚀 3. FinMind 核心數據引擎 (極速快取版)
-# ===================================================
-@st.cache_data(ttl=3600)  # 快取 1 小時，大幅節省 API 額度並防止被 API 阻擋鎖定
+# 3. 🚀 FinMind 核心數據引擎 (極速快取 + 強效防禦版)
+@st.cache_data(ttl=3600)  # 快取 1 小時，大幅節省 API 額度並防止被鎖
 def fetch_clean_stock_data(ticker_symbol, token):
     # 強效清理代碼 (FinMind 只需要數字，徹底去除 .TW, .TWO 避免抓不到資料)
-    clean_id = ticker_symbol.replace(".TW", "").replace(".TWO", "").replace(".v", "").replace(".V", "")
+    clean_id = ticker_symbol.upper().replace(".TW", "").replace(".TWO", "").replace(".V", "")
     
     price_start_date = (datetime.now() - timedelta(days=200)).strftime("%Y-%m-%d")
     val_start_date = (datetime.now() - timedelta(days=15)).strftime("%Y-%m-%d")
@@ -104,11 +76,21 @@ def fetch_clean_stock_data(ticker_symbol, token):
             "token": token
         }, timeout=10)
         
-        price_data = res_price.json()
+        if res_price.status_code == 429:
+            return None, {}, "FinMind API 頻率限制 (Too Many Requests)，請稍後再試。"
+            
+        try:
+            price_data = res_price.json()
+        except:
+            return None, {}, f"API 未回傳正確 JSON 格式 (HTTP {res_price.status_code})"
+            
         if price_data.get("msg") != "success" or not price_data.get("data"):
-            return None, {}, f"代碼 [{clean_id}] 不存在或已達今日 API 上限。"
+            return None, {}, price_data.get("msg", "無法從 FinMind 取得股價，請確認代碼或 API 額度。")
             
         df_price = pd.DataFrame(price_data["data"])
+        if df_price.empty:
+            return None, {}, "查無此股票之歷史價格數據。"
+            
         df_price.rename(columns={'close': 'Close', 'date': 'Date', 'max': 'High', 'min': 'Low', 'open': 'Open'}, inplace=True)
         df_price['Date'] = pd.to_datetime(df_price['Date'])
         df_price.set_index('Date', inplace=True)
@@ -143,7 +125,7 @@ def get_display_name(ticker):
 # 📊 介面啟動與主選單
 # ===================================================
 st.title("📊 個人化智慧看盤系統 v18.0")
-st.caption("🚀 全面導入 FinMind API │ 🛡️ 整合 Google Sheets 雲端永久儲存 │ 👑 穩定高速版")
+st.caption("🚀 全面導入 FinMind API │ 🛡️ 告別 Yahoo 阻擋斷線 │ 👑 穩定高速版")
 
 if st.button("🔄 強制清除股價快取 (抓取最新盤後資料)"):
     st.cache_data.clear()
@@ -158,7 +140,7 @@ with main_tab:
     if not st.session_state.watchlist:
         st.info("💡 目前系統內沒有股票。請切換到「設定後台」新增股票或上傳備份檔！")
     elif FINMIND_TOKEN == "請在這裡貼上你的_FinMind_Token":
-        st.error("🚨 系統偵測到你尚未設定 FinMind Token！")
+        st.error("🚨 系統偵測到你尚未設定 FinMind Token！請先至程式碼第 11 行貼上你的 Token。")
     else:
         ma_strategy = st.radio("買點策略", ["波段操作 (20MA)", "長線大底 (60MA)"], horizontal=True, key="ma_strat_180")
         st.write("---")
@@ -210,7 +192,7 @@ with main_tab:
             else: 
                 chips_status = f"🟡 籌碼震盪 ({net_buy_5d}張)"
 
-            # 移動停損即時監控數據
+            # 移動停損即時監控數據 (語法錯誤已徹底根除)
             price = float(hist['Close'].iloc[-1])
             historical_max = float(hist['Close'].max())
             stop_base = max(item["cost"], historical_max)
@@ -257,7 +239,7 @@ with main_tab:
 # ⚙️ 設定後台分頁
 # ===================================================
 with control_tab:
-    st.markdown("### ☁️ 系統資料雲端備份與還原中樞")
+    st.markdown("### ☁️ 系統資料備份與還原中樞")
     col_bak1, col_bak2 = st.columns(2)
     
     with col_bak1:
@@ -277,26 +259,21 @@ with control_tab:
         )
         
     with col_bak2:
-        st.write("② 滿血復活：將上傳的舊 JSON 資料同步覆寫回 Google Sheets")
+        st.write("② 滿血復活：上傳備份檔即可還原")
         uploaded_backup = st.file_uploader("📤 上傳備份檔 (.json)", type=["json"], label_visibility="collapsed")
         if uploaded_backup is not None:
             try:
                 uploaded_data = json.load(uploaded_backup)
                 if "watchlist" in uploaded_data:
                     st.session_state.watchlist = uploaded_data["watchlist"]
-                    names_db = uploaded_data.get("names", {})
-                    backup_db = uploaded_data.get("backup_db", {})
-                    
-                    # 覆寫儲存回 Google Sheets 雲端
-                    save_dict_to_sheet("watchlist", st.session_state.watchlist)
-                    save_dict_to_sheet("names_db", names_db)
-                    save_dict_to_sheet("backup_db", backup_db)
-                    
-                    st.success("✨ 雲端資料同步還原成功！網頁即將重整...")
+                    save_json(WATCHLIST_FILE, uploaded_data["watchlist"])
+                    save_json(NAMES_FILE, uploaded_data.get("names", {}))
+                    save_json(BACKUP_DATA_FILE, uploaded_data.get("backup_db", {}))
+                    st.success("✨ 數據還原成功！網頁即將重整...")
                     time.sleep(1.0)
                     st.rerun()
-            except Exception as ex: 
-                st.error(f"❌ 解析或寫入雲端失敗: {str(ex)}")
+            except: 
+                st.error("❌ 解析失敗，請確認檔案格式是否正確。")
                 
     st.write("---")
 
@@ -316,14 +293,12 @@ with control_tab:
         if st.button("💾 確認儲存股票", use_container_width=True):
             if new_stock:
                 st.session_state.watchlist[new_stock] = {"type": stock_type, "cost": cost, "qty": qty}
-                # 儲存回雲端 watchlist 工作表
-                save_dict_to_sheet("watchlist", st.session_state.watchlist)
+                save_json(WATCHLIST_FILE, st.session_state.watchlist)
                 if custom_name: 
                     names_db[new_stock] = custom_name
-                    # 儲存回雲端 names_db 工作表
-                    save_dict_to_sheet("names_db", names_db)
+                    save_json(NAMES_FILE, names_db)
                 st.cache_data.clear()
-                st.success(f"股票 {new_stock} 儲存並成功同步至雲端！")
+                st.success(f"股票 {new_stock} 儲存成功！")
                 time.sleep(0.5)
                 st.rerun()
 
@@ -335,9 +310,8 @@ with control_tab:
             if st.button("⚠️ 確認刪除", type="primary", use_container_width=True):
                 if stock_to_delete != "-- 請選擇 --" and stock_to_delete in st.session_state.watchlist:
                     del st.session_state.watchlist[stock_to_delete]
-                    # 更新回雲端 watchlist 工作表
-                    save_dict_to_sheet("watchlist", st.session_state.watchlist)
-                    st.success(f"已成功自雲端刪除 {stock_to_delete}！")
+                    save_json(WATCHLIST_FILE, st.session_state.watchlist)
+                    st.success(f"已成功刪除 {stock_to_delete}！")
                     time.sleep(0.5)
                     st.rerun()
         else:
@@ -372,9 +346,8 @@ with control_tab:
                     "pe": pe_in, 
                     "yield": y_in
                 }
-                # 更新回雲端 backup_db 工作表
-                save_dict_to_sheet("backup_db", backup_db)
-                st.success(f"✨ {tgt_b} 專屬數據同步至雲端成功！")
+                save_json(BACKUP_DATA_FILE, backup_db)
+                st.success(f"✨ {tgt_b} 專屬數據同步成功！")
                 time.sleep(0.5)
                 st.rerun()
         else:
