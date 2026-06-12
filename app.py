@@ -43,7 +43,7 @@ try:
 
 # 3. 🔥 關鍵防呆：在讀取完後，立刻強制把整張表的所有格子都變成「字串（文字）」
 # 這樣一來，不管雲端填的是純數字還是有空格，後面的 .str 語法絕對不會再報錯！
-df = df.astype(str)
+    df = df.astype(str)
 
     # 過濾可能不小心讀到的空行或說明列
     df_cloud = df_cloud[df_cloud['stock_id'].notna() & (df_cloud['stock_id'].str.strip() != "")]
