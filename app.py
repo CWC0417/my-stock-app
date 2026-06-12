@@ -43,12 +43,16 @@ try:
     df_cloud = conn.read(worksheet="工作表1", ttl=0)
     df_cloud['stock_id'] = df_cloud['stock_id'].astype(str).str.strip()
     df_cloud['stock_id'] = df_cloud['stock_id'].str.split('.').str[0]
+    
+    # 🔥 核心防呆修正：如果文字長度不滿 4 位（例如 "50"），自動在前面補 0 補到 4 位（變成 "0050"）
+    # 如果原本就是 "2330"（滿 4 位）或 "0056" 則完全不受影響！
+    df_cloud['stock_id'] = df_cloud['stock_id'].str.zfill(4)
+
     df_cloud = df_cloud[df_cloud['stock_id'].notna() & (df_cloud['stock_id'] != "") & (df_cloud['stock_id'] != "nan")]
     df_cloud = df_cloud[~df_cloud['stock_id'].str.contains("必填", na=False)]
 except Exception as e:
     st.error(f"🚨 讀取雲端資料表失敗，請檢查權限或 Secrets 設定。錯誤原因: {str(e)}")
     st.stop()
-
 # 將雲端 DataFrame 拆解並對應回原本的系統核心字典中
 watchlist = {}
 names_db = {}
