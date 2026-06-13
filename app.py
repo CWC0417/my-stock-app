@@ -245,7 +245,7 @@ with main_tab:
             else:
             # 【情境二：帳面開始賺錢】（例如起飛的台積電、國巨）
             # 停損利線自動切換成 10MA，動態向上鎖住獲利，同時兼顧兩者優點
-    trailing_stop_line = max(item["cost"] * 0.90, ma10)
+                trailing_stop_line = max(item["cost"] * 0.90, ma10)
             
             if price > trailing_stop_line:
                 drop_needed = ((price - trailing_stop_line) / price) * 100
