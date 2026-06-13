@@ -233,7 +233,7 @@ with main_tab:
                 chips_status = f"🟡 籌碼震盪 ({net_buy_5d}張)"
                 
             price = float(hist['Close'].iloc[-1])
-            # 🎯 折衷核心：引入 10MA（十日線），兼顧靈敏度與沉穩度
+            historical_max = float(hist['Close'].max())
             ma10 = float(hist['Close'].rolling(window=10).mean().iloc[-1])
 
             # 🛡️ 雙軌制風控邏輯
