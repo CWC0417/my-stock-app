@@ -232,10 +232,20 @@ with main_tab:
             else: 
                 chips_status = f"🟡 籌碼震盪 ({net_buy_5d}張)"
 
-            price = float(hist['Close'].iloc[-1])
-            historical_max = float(hist['Close'].max())
-            stop_base = max(item["cost"], historical_max)
-            trailing_stop_line = stop_base * 0.90 
+                price = float(hist['Close'].iloc[-1])
+
+            # 🎯 折衷核心：引入 10MA（十日線），兼顧靈敏度與沉穩度
+                ma10 = float(hist['Close'].rolling(window=10).mean().iloc[-1])
+
+            # 🛡️ 雙軌制風控邏輯
+            if price <= item["cost"]:
+            # 【情境一：尚未脫離成本區】（例如你目前的華通）
+            # 鐵底就是成本打 9 折，給股票完整的呼吸空間，絕對不誤報！
+                trailing_stop_line = item["cost"] * 0.90
+            else:
+            # 【情境二：帳面開始賺錢】（例如起飛的台積電、國巨）
+            # 停損利線自動切換成 10MA，動態向上鎖住獲利，同時兼顧兩者優點
+    trailing_stop_line = max(item["cost"] * 0.90, ma10)
             
             if price > trailing_stop_line:
                 drop_needed = ((price - trailing_stop_line) / price) * 100
