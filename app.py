@@ -40,7 +40,7 @@ if not st.session_state.authenticated:
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 try:
-    df_cloud = conn.read(worksheet="工作表1", ttl=600)
+    df_cloud = conn.read(worksheet="工作表1", ttl=60)
     df_cloud['stock_id'] = df_cloud['stock_id'].astype(str).str.strip()
     df_cloud['stock_id'] = df_cloud['stock_id'].str.split('.').str[0]
     
